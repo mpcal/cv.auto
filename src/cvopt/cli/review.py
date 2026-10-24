@@ -91,7 +91,7 @@ def edit_payload(item: ProposalItem) -> dict[str, Any]:
 async def walk(c: Container, user: UserContext, batch_id: str, pending: list[ProposalItem]) -> str:
     for n, item in enumerate(pending, start=1):
         show_item(item, n, len(pending))
-        console.print(HELP)
+        console.print(HELP, markup=False)
         choice = Prompt.ask("Decision", choices=CHOICES, default="a", case_sensitive=True)
         if choice == "a":
             await c.ingestion.decide_item(user, batch_id, item.seq, Decision.ACCEPT)

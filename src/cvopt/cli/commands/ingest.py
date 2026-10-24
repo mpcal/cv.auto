@@ -29,6 +29,20 @@ def ingest(
             console.print(
                 f"{file.name} was already ingested as document {short(res.duplicate_of)}; skipped."
             )
+            open_batch = next(
+                (
+                    b
+                    for b in await c.ingestion.list_batches(u, BatchStatus.OPEN)
+                    if b.document_id == res.duplicate_of
+                ),
+                None,
+            )
+            if open_batch and (
+                accept_all or Confirm.ask("Its review is unfinished. Resume?", default=True)
+            ):
+                await review_batch(c, u, open_batch.id, accept_all)
+            elif open_batch:
+                console.print(f"Resume later with: cvopt review {short(open_batch.id)}")
             return
         console.print(f"Stored document {short(res.document_id)}.")
         if not res.batch_id:
