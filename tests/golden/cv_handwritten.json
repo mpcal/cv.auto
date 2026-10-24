@@ -1,0 +1,55 @@
+{
+  "basics": {
+    "name": "Alice Example",
+    "label": "Lead Data Scientist",
+    "email": "alice.example@example.org",
+    "summary": "Data scientist with nine years of experience in forecasting and machine learning. I lead small teams and work closely with business stakeholders.",
+    "location": {"city": "Zurich", "countryCode": "CH"}
+  },
+  "work": [
+    {
+      "name": "Nordlicht Analytics AG",
+      "location": "Zurich",
+      "position": "Lead Data Scientist",
+      "startDate": "2021-03",
+      "highlights": [
+        "Led a team of 6 data scientists building demand-forecasting models for retail clients.",
+        "Cut forecast error by 18% by introducing gradient-boosted models in Python (LightGBM).",
+        "Introduced MLOps practices with MLflow and Kubernetes."
+      ]
+    },
+    {
+      "name": "Bergwerk Software GmbH",
+      "location": "Munich",
+      "position": "Data Scientist",
+      "startDate": "2017-09",
+      "endDate": "2021-02",
+      "highlights": [
+        "Migrated the analytics data platform from MySQL to PostgreSQL, reducing query times by 40%.",
+        "Built churn-prediction models in Python and scikit-learn for 3 telecom customers."
+      ]
+    },
+    {
+      "name": "Calder & Finch Ltd",
+      "location": "London",
+      "position": "Junior Analyst",
+      "startDate": "2015-07",
+      "endDate": "2017-08",
+      "highlights": ["Built weekly sales dashboards in Tableau and SQL."]
+    }
+  ],
+  "education": [
+    {"institution": "ETH Zurich", "area": "Computer Science", "studyType": "MSc", "startDate": "2013-09", "endDate": "2015-06"}
+  ],
+  "skills": [
+    {"name": "Data science", "keywords": ["Python", "SQL", "PostgreSQL", "LightGBM", "MLflow"]},
+    {"name": "Collaboration", "keywords": ["stakeholder management"]}
+  ],
+  "languages": [
+    {"language": "English", "fluency": "C2"},
+    {"language": "German", "fluency": "Native speaker"}
+  ],
+  "certificates": [
+    {"name": "AWS Certified Solutions Architect – Associate", "date": "2022-05", "issuer": "Amazon Web Services"}
+  ]
+}

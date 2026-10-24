@@ -1,0 +1,15 @@
+Research Scientist, Probabilistic Machine Learning — Halcyon Institute for Applied AI, Basel
+
+We are looking for a Research Scientist to join our probabilistic ML group.
+
+Requirements
+- A PhD in machine learning, statistics or a closely related field (required).
+- A track record of first-author publications at major ML venues (NeurIPS, ICML, ICLR).
+- Expert knowledge of Bayesian inference and probabilistic programming (e.g. Pyro, Stan).
+- Strong Python and PyTorch skills.
+- Fluent English.
+
+Nice to have
+- Experience supervising PhD students.
+
+The position is based in Basel; relocation support is available.

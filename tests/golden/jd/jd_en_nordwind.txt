@@ -1,0 +1,25 @@
+Senior Data Scientist (m/f/d) — Nordwind Retail AG, Zurich
+
+About us
+Nordwind Retail AG runs 140 grocery stores across Switzerland. Our Data & AI team turns sales data into better decisions on pricing, stock and promotions.
+
+Your tasks
+- Build and run demand-forecasting models for our stores.
+- Lead a small team of data scientists and mentor juniors.
+- Present results to category managers and the executive board.
+
+What you bring
+- At least 5 years of experience with Python for data science.
+- Strong experience with machine learning, in particular gradient boosting and time-series forecasting.
+- Very good SQL skills; PostgreSQL is a plus.
+- Experience leading data science teams.
+- Excellent stakeholder management and communication skills.
+- An MSc in Computer Science, Statistics or a related field.
+- Fluent English (C1); German (B2) is a plus.
+- Ideally experience with MLflow and Kubernetes.
+- Experience in the retail industry is preferred.
+
+What we offer
+Hybrid work (2 days in our Zurich office), 25 days of vacation, a yearly training budget.
+
+You need a valid Swiss work permit. Start date: as soon as possible.

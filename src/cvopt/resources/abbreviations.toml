@@ -1,0 +1,6 @@
+# Abbreviations whose periods do not end a sentence.
+common = ["e.g.", "i.e.", "etc.", "vs.", "Dr.", "Prof.", "Mr.", "Mrs.", "Ms.", "approx.", "Inc.", "Ltd.", "Co.", "Jr.", "Sr.", "St."]
+en = ["incl.", "dept.", "no."]
+de = ["z.B.", "z. B.", "d.h.", "d. h.", "bzw.", "ca.", "usw.", "u.a.", "u. a.", "inkl.", "evtl.", "ggf.", "Nr.", "Hr.", "Fr.", "sog.", "vgl."]
+fr = ["p.ex.", "M.", "Mme.", "env."]
+it = ["ad es.", "Sig.", "ecc."]

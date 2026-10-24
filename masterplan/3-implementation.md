@@ -202,12 +202,15 @@ All domain types are frozen Pydantic models that reject unknown fields, and all 
 class Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+
 Month = Annotated[str, Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")]
+
 
 @dataclass(frozen=True)
 class UserContext:
-    user_id: str                     # normalized email: stripped, lower-case
-    user_key: str                    # sha256(user_id).hexdigest()[:16]
+    user_id: str  # normalized email: stripped, lower-case
+    user_key: str  # sha256(user_id).hexdigest()[:16]
+
 
 class Position(Model):
     id: str
@@ -215,18 +218,20 @@ class Position(Model):
     employer_location: str = ""
     title: str
     start_month: Month
-    end_month: Month | None          # None = current
+    end_month: Month | None  # None = current
+
 
 class Claim(Model):
     id: str
     type: ClaimType
     text: str
-    text_lang: str                   # ISO 639-1
+    text_lang: str  # ISO 639-1
     position_id: str | None
     keywords: list[str]
     status: ClaimStatus
     origin: Origin
-    provability: Provability         # always set by rules.claim_provability()
+    provability: Provability  # always set by rules.claim_provability()
+
 
 class Evidence(Model):
     id: str
@@ -237,19 +242,21 @@ class Evidence(Model):
     reference_name: str = ""
     reference_contact: str = ""
 
+
 class Requirement(Model):
-    id: str                          # "R01", "R02", ... in JD order
+    id: str  # "R01", "R02", ... in JD order
     text: str
     category: RequirementCategory
     importance: Importance
-    keywords: list[str]              # the JD's own spelling
+    keywords: list[str]  # the JD's own spelling
     synonyms: list[str]
-    years: float | None = None                   # years_experience
-    language_code: str | None = None             # language
-    language_level: str | None = None            # A1–C2 or native
-    degree_level: DegreeLevel | None = None      # education
+    years: float | None = None  # years_experience
+    language_code: str | None = None  # language
+    language_level: str | None = None  # A1–C2 or native
+    degree_level: DegreeLevel | None = None  # education
     degree_fields: list[str] = []
-    certificate_names: list[str] = []            # certification
+    certificate_names: list[str] = []  # certification
+
 
 class JobDescription(Model):
     title: str
@@ -258,26 +265,31 @@ class JobDescription(Model):
     requirements: list[Requirement]
     logistics: list[str]
 
+
 class CVElement(Model):
-    id: str                          # JSON pointer; summary sentences append "#<index>"
+    id: str  # JSON pointer; summary sentences append "#<index>"
     kind: ElementKind
     text: str
-    position_ref: str | None = None  # highlights: stored position id, or "/work/<i>" for a parsed file
+    position_ref: str | None = (
+        None  # highlights: stored position id, or "/work/<i>" for a parsed file
+    )
     start_month: Month | None = None
     end_month: Month | None = None
     placement: float
+
 
 class Candidate(Model):
     id: str
     slot: Slot
     position_id: str | None
     text: str
-    source_claim_ids: list[str]      # empty only for invented candidates
+    source_claim_ids: list[str]  # empty only for invented candidates
     fidelity: Fidelity
     provability: Provability
     inferred_from: list[str] = []
-    assertion_key: str | None = None # invented only: the requirement id it covers
+    assertion_key: str | None = None  # invented only: the requirement id it covers
     lines: float
+
 
 class Annotation(Model):
     pointer: str
@@ -289,19 +301,22 @@ class Annotation(Model):
     inferred_from: list[str]
     requirement_ids: list[str]
     impact: float
-    row: int                         # report row number
+    row: int  # report row number
+
 
 class RequirementResult(Model):
     requirement_id: str
     weight: float
     coverage: float
-    winners: dict[str, float]        # element id -> share of this requirement's points
+    winners: dict[str, float]  # element id -> share of this requirement's points
     gap_points: float
+
 
 class ScoreResult(Model):
     total: float
     requirements: list[RequirementResult]
-    impacts: dict[str, float]        # element id -> pp
+    impacts: dict[str, float]  # element id -> pp
+
 
 class ReportRow(Model):
     row: int
@@ -325,47 +340,66 @@ Ports are `typing.Protocol` classes; the database is reached only through `UserR
 ```python
 T = TypeVar("T", bound=BaseModel)
 
+
 @dataclass(frozen=True)
 class TextPart:
     text: str
 
+
 @dataclass(frozen=True)
 class FilePart:
-    media_type: str                  # application/pdf, image/png, image/jpeg
+    media_type: str  # application/pdf, image/png, image/jpeg
     data: bytes
+
 
 @dataclass(frozen=True)
 class LLMResult(Generic[T]):
-    output: T | None                 # None when stopped by refusal or max_tokens
+    output: T | None  # None when stopped by refusal or max_tokens
     stop_reason: str
     model: str
 
+
 class LLMClient(Protocol):
-    async def complete(self, *, model: str, system: str, content: list[TextPart | FilePart],
-                       output_model: type[T], max_tokens: int) -> LLMResult[T]: ...
+    async def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        content: list[TextPart | FilePart],
+        output_model: type[T],
+        max_tokens: int,
+    ) -> LLMResult[T]: ...
+
 
 class TextExtractor(Protocol):
-    async def extract(self, path: Path) -> ExtractedText: ...   # text, media_type, pages, needs_transcription
+    async def extract(
+        self, path: Path
+    ) -> ExtractedText: ...  # text, media_type, pages, needs_transcription
+
 
 class LanguageDetector(Protocol):
-    def detect(self, text: str) -> str: ...                     # ISO 639-1, or "und"
+    def detect(self, text: str) -> str: ...  # ISO 639-1, or "und"
+
 
 class WebFetcher(Protocol):
     async def fetch_main_text(self, url: str) -> FetchedPage: ...  # final url, title, text
 
+
 class Renderer(Protocol):
     def render(self, model: RenderModel, out_path: Path) -> RenderResult: ...  # page count
+
 
 class Clock(Protocol):
     def now(self) -> datetime: ...
     def today(self) -> date: ...
+
 
 class FileStore(Protocol):
     def user_dir(self, user: UserContext) -> Path: ...
     def save_document(self, user: UserContext, document_id: str, ext: str, data: bytes) -> Path: ...
     def document_path(self, user: UserContext, document_id: str, ext: str) -> Path: ...
     def new_run_dir(self, user: UserContext, name: str) -> Path: ...
-    def run_dir(self, user: UserContext, ref: str) -> Path: ...    # folder name or unique prefix
+    def run_dir(self, user: UserContext, ref: str) -> Path: ...  # folder name or unique prefix
     def lock(self, user: UserContext) -> AbstractContextManager[None]: ...
     def delete_user_files(self, user: UserContext) -> None: ...
 ```
@@ -377,15 +411,22 @@ SQLAlchemy Core `Table` objects in `adapters/db/schema.py`. A helper adds the co
 ```python
 def user_table(name: str, *columns: SchemaItem) -> Table:
     return Table(
-        name, metadata,
-        Column("id", String(26), primary_key=True),                       # ULID
-        Column("user_id", String(320), ForeignKey("users.user_id", ondelete="CASCADE"),
-               nullable=False, index=True),
+        name,
+        metadata,
+        Column("id", String(26), primary_key=True),  # ULID
+        Column(
+            "user_id",
+            String(320),
+            ForeignKey("users.user_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
         Column("created_at", String(32), nullable=False),
         Column("updated_at", String(32), nullable=False),
         *columns,
-        UniqueConstraint("user_id", "id"),                                 # target of composite keys
+        UniqueConstraint("user_id", "id"),  # target of composite keys
     )
+
 
 claim = user_table(
     "claim",
@@ -393,7 +434,7 @@ claim = user_table(
     Column("text", Text, nullable=False),
     Column("text_lang", String(8), nullable=False),
     Column("position_id", String(26)),
-    Column("keywords", Text, nullable=False),                               # JSON array as text
+    Column("keywords", Text, nullable=False),  # JSON array as text
     Column("status", String(16), nullable=False),
     Column("origin", String(16), nullable=False),
     Column("provability", String(8), nullable=False),
@@ -415,16 +456,21 @@ class UserRepository:
     def __init__(self, engine: AsyncEngine, user: UserContext, clock: Clock) -> None: ...
 
     def _mine(self, table: Table) -> ColumnElement[bool]:
-        return table.c.user_id == self._user.user_id     # used by every select, update, delete
+        return table.c.user_id == self._user.user_id  # used by every select, update, delete
 
     async def _insert(self, table: Table, values: dict[str, Any]) -> str:
         now = self._clock.now().isoformat()
-        row = {"id": str(ULID()), "user_id": self._user.user_id,
-               "created_at": now, "updated_at": now, **values}
+        row = {
+            "id": str(ULID()),
+            "user_id": self._user.user_id,
+            "created_at": now,
+            "updated_at": now,
+            **values,
+        }
         ...
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]: ...   # one connection; nested calls reuse it
+    async def transaction(self) -> AsyncIterator[None]: ...  # one connection; nested calls reuse it
 ```
 
 - No method takes a user id as a parameter, and no other module imports the tables.
@@ -442,14 +488,14 @@ Each task is one module holding its input model, output model and a `Task` objec
 ```python
 @dataclass(frozen=True)
 class Task(Generic[I, O]):
-    name: str                                    # "parse_jd"; system prompt in resources/prompts/<name>.md
-    version: str                                 # bump on any change to prompt, schema or render
+    name: str  # "parse_jd"; system prompt in resources/prompts/<name>.md
+    version: str  # bump on any change to prompt, schema or render
     tier: Literal["strong", "fast"]
     input_model: type[I]
     output_model: type[O]
     max_tokens: int
-    render: Callable[[I], list[TextPart | FilePart]]        # builds the user message
-    check: Callable[[I, O], None] | None = None             # raises ValueError on semantic errors
+    render: Callable[[I], list[TextPart | FilePart]]  # builds the user message
+    check: Callable[[I, O], None] | None = None  # raises ValueError on semantic errors
 ```
 
 `check` covers what a schema cannot express, e.g. that `judge_match` returns exactly one verdict per element id it was given, or that ids it returns exist in its input.
@@ -459,15 +505,21 @@ class Task(Generic[I, O]):
 ```python
 async def run(self, task: Task[I, O], inp: I) -> O:
     model = self._settings.model_for(task.tier)
-    key = cache_key(task.name, task.version, model, canonical_json(inp))   # FilePart bytes enter as their sha256
+    key = cache_key(
+        task.name, task.version, model, canonical_json(inp)
+    )  # FilePart bytes enter as their sha256
     if (hit := await self._repo.cache_get(key)) is not None:
         return task.output_model.model_validate_json(hit)
     max_tokens, feedback = task.max_tokens, []
     for _ in range(1 + self._settings.llm.schema_retries):
         async with self._semaphore:
-            res = await self._client.complete(model=model, system=self._prompt(task),
-                                              content=task.render(inp) + feedback,
-                                              output_model=task.output_model, max_tokens=max_tokens)
+            res = await self._client.complete(
+                model=model,
+                system=self._prompt(task),
+                content=task.render(inp) + feedback,
+                output_model=task.output_model,
+                max_tokens=max_tokens,
+            )
         if res.stop_reason == "refusal":
             raise LLMTaskError(task.name, "refused")
         if res.stop_reason == "max_tokens":
@@ -501,14 +553,20 @@ class AnthropicLLMClient:
         # image    -> {"type": "image",    "source": {"type": "base64", "media_type": ..., "data": ...}}
         try:
             resp = await self._client.messages.parse(
-                model=model, max_tokens=max_tokens, system=system,
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
                 messages=[{"role": "user", "content": blocks}],
-                output_format=output_model)
-        except ValidationError as err:                     # parsed JSON violated the model's own constraints
+                output_format=output_model,
+            )
+        except ValidationError as err:  # parsed JSON violated the model's own constraints
             return LLMResult(output=None, stop_reason=f"invalid_output: {err}", model=model)
         ok = resp.stop_reason not in ("refusal", "max_tokens")
-        return LLMResult(output=resp.parsed_output if ok else None,
-                         stop_reason=resp.stop_reason, model=resp.model)
+        return LLMResult(
+            output=resp.parsed_output if ok else None,
+            stop_reason=resp.stop_reason,
+            model=resp.model,
+        )
 ```
 
 - `messages.parse` sends the Pydantic model as `output_config.format` and returns the validated object in `parsed_output`.
@@ -581,10 +639,14 @@ Files over `max_mb` and PDFs over `max_pdf_pages` pages are refused with an `Inp
 ### 7.2 Language detection
 
 ```python
-detector = (LanguageDetectorBuilder
-            .from_languages(Language.ENGLISH, Language.GERMAN, Language.FRENCH, Language.ITALIAN)
-            .with_minimum_relative_distance(0.1)
-            .build())
+detector = (
+    LanguageDetectorBuilder.from_languages(
+        Language.ENGLISH, Language.GERMAN, Language.FRENCH, Language.ITALIAN
+    )
+    .with_minimum_relative_distance(0.1)
+    .build()
+)
+
 
 def detect(text: str) -> str:
     lang = detector.detect_language_of(text[:5000])
@@ -609,24 +671,28 @@ Python does all the logic: it merges `cv.json`, the annotations and the language
 ```python
 class RStatement(Model):
     text: str
-    mark: Literal["", "E", "I"]     # exaggerated, invented; always "" in clean mode
-    row: int                        # report row number; 0 in clean mode
+    mark: Literal["", "E", "I"]  # exaggerated, invented; always "" in clean mode
+    row: int  # report row number; 0 in clean mode
+
 
 class RPosition(Model):
     title: str
     employer: str
     location: str
-    dates: str                      # "04/2019 – 12/2022", or "03/2023 – present" from labels
+    dates: str  # "04/2019 – 12/2022", or "03/2023 – present" from labels
     highlights: list[RStatement]
 
-class REntry(Model):                # education and certificates
+
+class REntry(Model):  # education and certificates
     title: str
     detail: str
     dates: str
 
+
 class RSkillGroup(Model):
     name: str
     keywords: list[RStatement]
+
 
 class RenderModel(Model):
     mode: Literal["annotated", "clean"]
@@ -634,7 +700,7 @@ class RenderModel(Model):
     font: str
     font_size_pt: float
     margin_mm: float
-    labels: dict[str, str]          # labels.toml section for lang, English as fallback
+    labels: dict[str, str]  # labels.toml section for lang, English as fallback
     name: str
     contact: list[str]
     headline: RStatement | None
@@ -642,11 +708,11 @@ class RenderModel(Model):
     work: list[RPosition]
     education: list[REntry]
     skills: list[RSkillGroup]
-    languages: list[str]            # "German (C1)"
+    languages: list[str]  # "German (C1)"
     certificates: list[REntry]
-    legend: str                     # annotated only
-    report_summary: list[str]       # annotated only: score, splits, logistics, timeline gaps
-    report: list[ReportRow]         # annotated only
+    legend: str  # annotated only
+    report_summary: list[str]  # annotated only: score, splits, logistics, timeline gaps
+    report: list[ReportRow]  # annotated only
 ```
 
 ### 8.2 Compilation
@@ -657,8 +723,14 @@ def render(self, model: RenderModel, out_path: Path) -> RenderResult:
         tmp = Path(tmp_dir)
         shutil.copy(TEMPLATE_PATH, tmp / "cv.typ")
         (tmp / "model.json").write_text(model.model_dump_json(), encoding="utf-8")
-        typst.compile(tmp / "cv.typ", output=out_path, root=tmp, font_paths=[FONTS_DIR],
-                      ignore_system_fonts=True, sys_inputs={"model": "model.json"})
+        typst.compile(
+            tmp / "cv.typ",
+            output=out_path,
+            root=tmp,
+            font_paths=[FONTS_DIR],
+            ignore_system_fonts=True,
+            sys_inputs={"model": "model.json"},
+        )
     return RenderResult(path=out_path, pages=len(PdfReader(out_path).pages))
 ```
 
@@ -743,15 +815,27 @@ class RepositoryFactory:
     def __init__(self, engine: AsyncEngine, clock: Clock) -> None: ...
     def for_user(self, user: UserContext) -> UserRepository: ...
 
+
 async def build_container(settings: Settings) -> Container:
-    engine = await open_database(settings.app.database_url)     # pragmas, then migrations
+    engine = await open_database(settings.app.database_url)  # pragmas, then migrations
     clock = SystemClock()
     repos = RepositoryFactory(engine, clock)
     files = LocalFileStore(settings.app.data_root)
     runners = TaskRunnerFactory(AnthropicLLMClient(settings.llm), repos, settings)
-    ...                                                          # adapters, then services
-    return Container(settings=settings, files=files, ingestion=..., data=..., jd=..., generation=...,
-                     scoring=..., report=..., render=..., account=..., engine=engine)
+    ...  # adapters, then services
+    return Container(
+        settings=settings,
+        files=files,
+        ingestion=...,
+        data=...,
+        jd=...,
+        generation=...,
+        scoring=...,
+        report=...,
+        render=...,
+        account=...,
+        engine=engine,
+    )
 ```
 
 Inside a service operation, `repos.for_user(user)` and `runners.for_user(user)` give user-bound helpers; the LLM cache is per user, so runners are too.
@@ -763,15 +847,16 @@ Inside a service operation, `repos.for_user(user)` and `runners.for_user(user)` 
 - Every command is synchronous and hands its work to one helper:
 
 ```python
-def run_async(ctx: typer.Context, op: Callable[[Container, UserContext], Awaitable[T]],
-              *, writes: bool) -> T:
+def run_async(
+    ctx: typer.Context, op: Callable[[Container, UserContext], Awaitable[T]], *, writes: bool
+) -> T:
     state: AppState = ctx.obj
 
     async def main() -> T:
         c = await build_container(state.settings)
         try:
             if writes:
-                with c.files.lock(state.user):                   # one writer per user
+                with c.files.lock(state.user):  # one writer per user
                     return await op(c, state.user)
             return await op(c, state.user)
         finally:
@@ -800,13 +885,15 @@ async def review_batch(c: Container, user: UserContext, batch_id: str, accept_al
             break
     ...
 
+
 async def walk(c, user, batch_id, pending) -> str:
     for n, item in enumerate(pending, start=1):
-        show_item(item, n, len(pending))      # panel: action, payload fields, excerpt, conflict values
-        choice = Prompt.ask("Decision", choices=["a", "r", "e", "s", "A", "q"],
-                            default="a", case_sensitive=True)
-        ...                                    # one branch per choice, as in P2 §8.3
-    return "again"                             # skipped items come round once more
+        show_item(item, n, len(pending))  # panel: action, payload fields, excerpt, conflict values
+        choice = Prompt.ask(
+            "Decision", choices=["a", "r", "e", "s", "A", "q"], default="a", case_sensitive=True
+        )
+        ...  # one branch per choice, as in P2 §8.3
+    return "again"  # skipped items come round once more
 ```
 
 - `a` and `r` call `decide_item`; after `r` the CLI lists the dependents that were rejected with the item.
@@ -826,11 +913,13 @@ The five pieces most likely to be implemented subtly wrong, as reference code. T
 ```python
 def normalize(s: str) -> str:
     s = unicodedata.normalize("NFC", s).casefold()
-    s = re.sub(r"[\u2010-\u2015]", "-", s)          # unify hyphens and dashes
+    s = re.sub(r"[\u2010-\u2015]", "-", s)  # unify hyphens and dashes
     return re.sub(r"\s+", " ", s).strip()
+
 
 def contains_term(term: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(normalize(term))}(?!\w)", normalize(text)) is not None
+
 
 def text_level(req: Requirement, text: str, verdict: MatchLevel) -> MatchLevel:
     """verdict = judge_match's answer: semantic, partial or none (P2 §7.2)."""
@@ -857,6 +946,7 @@ APPLIES: dict[RequirementCategory, set[ElementKind]] = {
     LANGUAGE: {ElementKind.LANGUAGE},
 }  # YEARS_EXPERIENCE is handled by years_credit; LOGISTICS is not scored
 
+
 def score(elements, reqs, value, cfg, as_of) -> ScoreResult:
     scored = [r for r in reqs if r.category is not LOGISTICS]
     total_w = sum(cfg.weight(r) for r in scored)
@@ -867,16 +957,26 @@ def score(elements, reqs, value, cfg, as_of) -> ScoreResult:
         if r.category is YEARS_EXPERIENCE:
             coverage, shares = years_credit(r, elements, value, cfg, as_of)
         else:
-            vals = {e.id: value(r.id, e.id) * e.placement
-                    for e in elements if e.kind in APPLIES[r.category]}
+            vals = {
+                e.id: value(r.id, e.id) * e.placement
+                for e in elements
+                if e.kind in APPLIES[r.category]
+            }
             coverage = max(vals.values(), default=0.0)
             best = [i for i, v in vals.items() if coverage > 0 and math.isclose(v, coverage)]
             shares = {i: 1 / len(best) for i in best}
         points = 100 * w * coverage / total_w
         for i, share in shares.items():
             impacts[i] += points * share
-        results.append(RequirementResult(requirement_id=r.id, weight=w, coverage=coverage, winners=shares,
-                                         gap_points=100 * w * (1 - coverage) / total_w))
+        results.append(
+            RequirementResult(
+                requirement_id=r.id,
+                weight=w,
+                coverage=coverage,
+                winners=shares,
+                gap_points=100 * w * (1 - coverage) / total_w,
+            )
+        )
     return ScoreResult(total=sum(impacts.values()), requirements=results, impacts=dict(impacts))
 ```
 
@@ -894,26 +994,45 @@ Re-scoring the whole CV for every candidate in every round is needlessly slow. K
 
 ```python
 class Coverage:
-    def __init__(self, reqs, fixed_elements, value, cfg, as_of): ...   # best[r] from fact records etc.
+    def __init__(
+        self, reqs, fixed_elements, value, cfg, as_of
+    ): ...  # best[r] from fact records etc.
 
     def gain(self, c: Candidate) -> float:
-        g = sum(self.w[r] * max(0.0, self.value(r, c.id) * self.placement(c) - self.best[r])
-                for r in self.text_reqs if c.slot_kind in APPLIES[self.category[r]])
-        g += sum(self.years_gain(r, c) for r in self.years_reqs)   # exact recomputation; few of these
+        g = sum(
+            self.w[r] * max(0.0, self.value(r, c.id) * self.placement(c) - self.best[r])
+            for r in self.text_reqs
+            if c.slot_kind in APPLIES[self.category[r]]
+        )
+        g += sum(
+            self.years_gain(r, c) for r in self.years_reqs
+        )  # exact recomputation; few of these
         return 100 * g / self.total_w
+
 
 def select(cands, cov: Coverage, cfg, budget_lines) -> list[Candidate]:
     chosen, used_claims, used_keys, lines = [], set(), set(), 0.0
     while True:
-        gains = {c.id: cov.gain(c) for c in cands if eligible(c, chosen, used_claims, used_keys, lines, budget_lines)}
+        gains = {
+            c.id: cov.gain(c)
+            for c in cands
+            if eligible(c, chosen, used_claims, used_keys, lines, budget_lines)
+        }
         gains = drop_weak_exaggerations(gains, cands, cfg.exaggeration_min_gain_pp)
         if not gains or max(gains.values()) <= 0:
             return chosen
         ratio = {cid: g / by_id[cid].lines for cid, g in gains.items()}
         top = max(ratio.values())
         tied = [by_id[cid] for cid, r in ratio.items() if r >= top - cfg.tie_window_pp]
-        pick = min(tied, key=lambda c: (FIDELITY_RANK[c.fidelity], -PROVABILITY_RANK[c.provability],
-                                        len(c.text), c.id))
+        pick = min(
+            tied,
+            key=lambda c: (
+                FIDELITY_RANK[c.fidelity],
+                -PROVABILITY_RANK[c.provability],
+                len(c.text),
+                c.id,
+            ),
+        )
         cov.add(pick)
         chosen.append(pick)
         lines += pick.lines
@@ -930,12 +1049,14 @@ def select(cands, cov: Coverage, cfg, budget_lines) -> list[Candidate]:
 ```python
 NUMBER = re.compile(r"\d+(?:[.,'’]\d+)*")
 
+
 def numbers(text: str) -> set[str]:
     return {m.replace("’", "'") for m in NUMBER.findall(text)}
 
+
 def passes_hard_facts(c: Candidate, sources: list[Claim], vocab: Vocabulary) -> bool:
     if c.fidelity is Fidelity.INVENTED:
-        return not re.search(r"\d", c.text)                 # invented: no figures at all
+        return not re.search(r"\d", c.text)  # invented: no figures at all
     src_text = " ".join([s.text for s in sources] + [k for s in sources for k in s.keywords])
     if not numbers(c.text) <= numbers(src_text):
         return False
@@ -952,7 +1073,9 @@ def passes_hard_facts(c: Candidate, sources: list[Claim], vocab: Vocabulary) -> 
 ```python
 def split_sentences(text: str, lang: str) -> list[str]:
     protected = text.strip()
-    for abbr in ABBREVIATIONS["common"] + ABBREVIATIONS.get(lang, []):   # "e.g.", "z.B.", "Dr.", "bzw."
+    for abbr in ABBREVIATIONS["common"] + ABBREVIATIONS.get(
+        lang, []
+    ):  # "e.g.", "z.B.", "Dr.", "bzw."
         protected = re.sub(rf"(?<!\w){re.escape(abbr)}", abbr.replace(".", "\u2024"), protected)
     parts = re.split(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ\"'(])", protected)
     return [p.replace("\u2024", ".") for p in parts if p]
