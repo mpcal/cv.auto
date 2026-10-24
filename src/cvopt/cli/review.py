@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import typer
 from pydantic import BaseModel, ValidationError
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -125,8 +126,12 @@ async def review_batch(c: Container, user: UserContext, batch_ref: str, accept_a
         if accept_all:
             await c.ingestion.accept_all(user, batch.id)
             break
-        if await walk(c, user, batch.id, pending) == "quit":
-            return
+        try:
+            if await walk(c, user, batch.id, pending) == "quit":
+                return
+        except KeyboardInterrupt:
+            console.print(f"\nInterrupted. Resume with: cvopt review {short(batch.id)}")
+            raise typer.Exit(130) from None
     items = await c.ingestion.list_items(user, batch.id)
     accepted = sum(i.decision is Decision.ACCEPT for i in items)
     console.print(
