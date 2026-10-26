@@ -80,7 +80,7 @@ class ReportSettings(Section):
 
 class MatchingSettings(Section):
     employer_similarity: int = 85
-    judge_batch_size: int = 40
+    judge_batch_size: int = 20
 
 
 class FetchSettings(Section):

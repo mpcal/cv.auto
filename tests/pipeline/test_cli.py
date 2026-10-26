@@ -13,8 +13,22 @@ from cvopt.bootstrap import Container
 from cvopt.cli.main import app
 from cvopt.config import Settings
 from cvopt.context import UserContext
-from cvopt.domain.enums import Decision, DocumentKind, ProposalAction
-from cvopt.domain.review import Note
+from cvopt.domain.enums import (
+    ClaimType,
+    Decision,
+    DocumentKind,
+    EvidenceKind,
+    ProposalAction,
+    RecordType,
+)
+from cvopt.domain.review import (
+    CreateClaim,
+    CreatePosition,
+    EvidenceDraft,
+    LinkFactSource,
+    Note,
+    Payload,
+)
 from tests.conftest import TEST_NOW
 from tests.scenarios import CV
 
@@ -108,6 +122,41 @@ async def test_skipped_items_come_round_again_and_apply_can_wait(
     out = await acli(settings, "review", note_batch, input="y\n")  # nothing pending: apply
     assert "Applied 2 item(s)" in out
     await acli(settings, "review", note_batch, code=1)  # closed now
+
+
+async def test_review_shows_titles_for_ids(
+    settings: Settings, container: Container, alice: UserContext
+) -> None:
+    repo = container.repos.for_user(alice)
+    stored = await repo.insert_position(
+        {"employer": "Vontobel", "title": "Analyst", "start_month": "2019-03", "end_month": None}
+    )
+    doc = await repo.insert_document(
+        {
+            "kind": DocumentKind.REFERENCE_LETTER,
+            "filename": "r.txt",
+            "sha256": "ff" * 32,
+            "mime_type": "text/plain",
+            "received_at": TEST_NOW,
+        }
+    )
+    batch = await repo.insert_batch(doc.id)
+    new = CreatePosition(employer="Acme", title="Lead", start_month="2023-01", end_month=None)
+    claim = CreateClaim(
+        type=ClaimType.SKILL,
+        text="Python",
+        text_lang="en",
+        position_id="$item:2",
+        keywords=[],
+        evidence=EvidenceDraft(kind=EvidenceKind.REFERENCE_LETTER),
+    )
+    link = LinkFactSource(record_type=RecordType.POSITION, record_id=stored.id)
+    payloads: list[Payload] = [link, new, claim]
+    for seq, payload in enumerate(payloads, start=1):
+        await repo.insert_item(batch.id, seq, payload)
+    out = await acli(settings, "review", batch.id, input="s\ns\nq\n")
+    assert "Analyst · Vontobel (2019-03 – current)" in out and stored.id in out
+    assert "Lead · Acme (2023-01 – current) (new, item #2)  $item:2" in out
 
 
 def test_review_needs_a_known_batch(settings: Settings) -> None:

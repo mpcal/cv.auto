@@ -13,7 +13,15 @@ from cvopt.bootstrap import Container
 from cvopt.cli.common import console, short
 from cvopt.context import UserContext
 from cvopt.domain.enums import BatchStatus, Decision
-from cvopt.domain.review import ProposalItem
+from cvopt.domain.records import Certificate, Claim, Education, Language, Position
+from cvopt.domain.review import (
+    CreateCertificate,
+    CreateClaim,
+    CreateEducation,
+    CreateLanguage,
+    CreatePosition,
+    ProposalItem,
+)
 from cvopt.errors import ConflictError
 
 CHOICES = ["a", "r", "e", "s", "A", "q"]
@@ -26,12 +34,51 @@ def _fmt(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def show_item(item: ProposalItem, n: int, total: int) -> None:
+def _label(record: BaseModel) -> str:
+    """A human-readable title for a stored record or the record an item proposes."""
+    match record:
+        case Position() | CreatePosition():
+            end = record.end_month or "current"
+            return f"{record.title} · {record.employer} ({record.start_month} – {end})"
+        case Education() | CreateEducation():
+            degree = record.degree_type or record.degree_level.value
+            return " · ".join(filter(None, [degree, record.area, record.institution]))
+        case Language() | CreateLanguage():
+            return f"{record.language_code} {record.level}"
+        case Certificate() | CreateCertificate():
+            return " · ".join(filter(None, [record.name, record.issuer]))
+        case Claim() | CreateClaim():
+            return record.text if len(record.text) <= 80 else record.text[:79] + "…"
+    return ""
+
+
+async def record_labels(
+    c: Container, user: UserContext, items: list[ProposalItem]
+) -> dict[str, str]:
+    """Labels for the ids a payload may name: stored records and `$item:<seq>` references."""
+    records: list[BaseModel] = [
+        *await c.data.list_positions(user),
+        *await c.data.list_education(user),
+        *await c.data.list_languages(user),
+        *await c.data.list_certificates(user),
+        *[cw.claim for cw in await c.data.list_claims(user)],
+    ]
+    labels = {r.id: _label(r) for r in records}  # type: ignore[attr-defined]
+    for i in items:
+        if label := _label(i.payload):
+            labels[f"$item:{i.seq}"] = f"{label} (new, item #{i.seq})"
+    return labels
+
+
+def show_item(item: ProposalItem, n: int, total: int, labels: dict[str, str]) -> None:
     table = Table.grid(padding=(0, 2))
     data = item.payload.model_dump(mode="json", exclude={"action"})
     evidence = data.pop("evidence", None)
     for key, value in data.items():
-        table.add_row(f"[bold]{key}[/bold]", _fmt(value))
+        if key.endswith("_id") and value in labels:
+            table.add_row(f"[bold]{key}[/bold]", f"{labels[value]}  [dim]{value}[/dim]")
+        else:
+            table.add_row(f"[bold]{key}[/bold]", _fmt(value))
     if evidence:
         table.add_row("[bold]evidence[/bold]", evidence["kind"])
         if evidence.get("excerpt"):
@@ -89,9 +136,15 @@ def edit_payload(item: ProposalItem) -> dict[str, Any]:
     return data
 
 
-async def walk(c: Container, user: UserContext, batch_id: str, pending: list[ProposalItem]) -> str:
+async def walk(
+    c: Container,
+    user: UserContext,
+    batch_id: str,
+    pending: list[ProposalItem],
+    labels: dict[str, str],
+) -> str:
     for n, item in enumerate(pending, start=1):
-        show_item(item, n, len(pending))
+        show_item(item, n, len(pending), labels)
         console.print(HELP, markup=False)
         choice = Prompt.ask("Decision", choices=CHOICES, default="a", case_sensitive=True)
         if choice == "a":
@@ -108,7 +161,7 @@ async def walk(c: Container, user: UserContext, batch_id: str, pending: list[Pro
             if Confirm.ask(f"Accept all {remaining} remaining item(s)?"):
                 await c.ingestion.accept_all(user, batch_id)
                 return "again"
-            return await walk(c, user, batch_id, pending[n - 1 :])
+            return await walk(c, user, batch_id, pending[n - 1 :], labels)
         elif choice == "q":
             console.print(f"Stopped. Resume with: cvopt review {short(batch_id)}")
             return "quit"
@@ -120,6 +173,7 @@ async def review_batch(c: Container, user: UserContext, batch_ref: str, accept_a
     batch = await c.ingestion.get_batch(user, batch_ref)
     if batch.status is not BatchStatus.OPEN:
         raise ConflictError(f"Batch {short(batch.id)} is {batch.status.value}; nothing to review.")
+    labels = await record_labels(c, user, await c.ingestion.list_items(user, batch.id))
     while pending := [
         i for i in await c.ingestion.list_items(user, batch.id) if i.decision is Decision.PENDING
     ]:
@@ -127,7 +181,7 @@ async def review_batch(c: Container, user: UserContext, batch_ref: str, accept_a
             await c.ingestion.accept_all(user, batch.id)
             break
         try:
-            if await walk(c, user, batch.id, pending) == "quit":
+            if await walk(c, user, batch.id, pending, labels) == "quit":
                 return
         except KeyboardInterrupt:
             console.print(f"\nInterrupted. Resume with: cvopt review {short(batch.id)}")

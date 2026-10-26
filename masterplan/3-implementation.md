@@ -158,7 +158,7 @@ timeline_gap_months = 3
 
 [matching]
 employer_similarity = 85       # rapidfuzz token_set_ratio, 0–100
-judge_batch_size = 40
+judge_batch_size = 20
 
 [fetch]
 timeout_s = 20
