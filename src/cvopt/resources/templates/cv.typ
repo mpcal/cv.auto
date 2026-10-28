@@ -2,12 +2,25 @@
 // evaluated as markup, so CV text needs no escaping.
 #let m = json(sys.inputs.model)
 #let L = m.labels
+#import "atsthetic.typ": generate-blocks
+#let theme = generate-blocks(
+  name: m.name,
+  title: if m.headline != none { m.headline.text } else { [] },
+  additional-info: none,
+  summary: [],
+  contacts: m.contact,
+  font-family: m.font,
+  font-size: m.font_size_pt * 1pt,
+  colors: (foreground: rgb("#243443"), muted: rgb("#edf1f4"), accent: rgb("#286483")),
+)
+#let (init-cv, section, activity, ..) = theme
+#show: init-cv
 #set document(title: m.name)
 #set page(paper: "a4", margin: m.margin_mm * 1mm)
 #set text(font: m.font, size: m.font_size_pt * 1pt, lang: m.lang, hyphenate: false)
 #set par(justify: false, leading: 0.55em)
 #set list(indent: 0.6em, body-indent: 0.5em, spacing: 0.45em)
-#show heading: it => block(above: 1.1em, below: 0.6em, text(size: 1.1em, weight: "bold", upper(it.body)))
+#show heading.where(level: 1): it => section(upper(it.body))
 
 #let stmt(s) = {
   let body = if s.mark == "I" { highlight(fill: rgb("#fde2e2"), s.text) }
@@ -16,12 +29,14 @@
   if s.row > 0 { [#body#super(s.mark + str(s.row))] } else { body }
 }
 
-#let line-entry(left, dates) = block(below: 0.4em)[#left #h(1fr) #dates]
+#let line-entry(left, dates) = activity(left, right: dates, separator: false, gutter: 0.4em)
 
-// Header
-#text(size: 16pt, weight: "bold", m.name)
-#if m.headline != none [ \ #text(size: 11pt, stmt(m.headline)) ]
-#if m.contact.len() > 0 [ \ #m.contact.join(" · ") ]
+// Atsthetic header; statements retain their annotation marks.
+#block(fill: rgb("#edf1f4"), radius: 3pt, inset: 12pt, width: 100%)[
+  #text(size: 23pt, weight: "bold", m.name)
+  #if m.headline != none [ \ #text(size: 12pt, stmt(m.headline)) ]
+  #if m.contact.len() > 0 [ \ #text(size: 9pt, m.contact.join(" · ")) ]
+]
 
 #if m.mode == "annotated" and m.legend != "" {
   block(above: 0.8em, inset: 6pt, stroke: 0.5pt + gray, text(size: 0.85em, m.legend))

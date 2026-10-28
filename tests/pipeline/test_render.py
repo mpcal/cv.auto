@@ -108,8 +108,12 @@ def service() -> RenderService:
     return RenderService(TypstRenderer(), SETTINGS)
 
 
-def test_clean_pdf_has_every_statement_in_order_and_no_marks(tmp_path: Path) -> None:
-    model = build_render_model(CV, SETTINGS)
+@pytest.mark.parametrize("template", ["atsthetic", "classic"])
+def test_clean_pdf_has_every_statement_in_order_and_no_marks(tmp_path: Path, template: str) -> None:
+    settings = SETTINGS.model_copy(deep=True)
+    settings.render = settings.render.model_copy(update={"template": template})
+    model = build_render_model(CV, settings)
+    assert model.template == template
     res = TypstRenderer().render(model, tmp_path / "cv.pdf")
     assert res.pages == 1
     text = pdf_text(res.path)
@@ -119,8 +123,14 @@ def test_clean_pdf_has_every_statement_in_order_and_no_marks(tmp_path: Path) -> 
     assert "03/2021 – present" in text and "Report" not in text
 
 
-def test_annotated_pdf_marks_exactly_exaggerated_and_invented(tmp_path: Path) -> None:
-    model = build_render_model(CV, SETTINGS, annotations=annotations(), report=REPORT)
+@pytest.mark.parametrize("template", ["atsthetic", "classic"])
+def test_annotated_pdf_marks_exactly_exaggerated_and_invented(
+    tmp_path: Path, template: str
+) -> None:
+    settings = SETTINGS.model_copy(deep=True)
+    settings.render = settings.render.model_copy(update={"template": template})
+    model = build_render_model(CV, settings, annotations=annotations(), report=REPORT)
+    assert model.template == template
     res = TypstRenderer().render(model, tmp_path / "cv-annotated.pdf")
     assert res.pages == 2  # the CV, then the report appendix
     cv_page = re.sub(r"\s+", " ", PdfReader(res.path).pages[0].extract_text())

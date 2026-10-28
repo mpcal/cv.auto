@@ -91,6 +91,7 @@ def build_render_model(
             title=report.title, company=report.company, date=report.created.isoformat()
         )
     return RenderModel(
+        template=settings.render.template,
         mode="annotated" if annotations is not None else "clean",
         lang=lang,
         font=settings.render.font,

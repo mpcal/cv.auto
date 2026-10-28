@@ -45,4 +45,14 @@ def test_missing_explicit_config_raises(tmp_path: Path) -> None:
 def test_layout_defaults_are_calibrated() -> None:
     # Values printed by scripts/calibrate_layout.py; re-run it after changing the template.
     s = load_settings()
-    assert (s.layout.chars_per_line, s.layout.lines_per_page) == (112, 62)
+    assert (s.layout.chars_per_line, s.layout.lines_per_page) == (112, 57)
+
+
+def test_render_template_configuration(tmp_path: Path) -> None:
+    assert load_settings().render.template == "atsthetic"
+    cfg = tmp_path / "render.toml"
+    cfg.write_text('[render]\ntemplate = "classic"\n')
+    assert load_settings(cfg).render.template == "classic"
+    cfg.write_text('[render]\ntemplate = "unknown"\n')
+    with pytest.raises(InputError):
+        load_settings(cfg)

@@ -103,6 +103,12 @@ uv run cvopt render <run-folder>/cv.json -o ~/cv-acme.pdf
 uv run cvopt render <run-folder>/cv.json --annotated     # re-create the annotated PDF
 ```
 
+The default PDF layout is adapted from [Atsthetic CV](https://typst.app/universe/package/atsthetic-cv/)
+(MIT), bundled locally for offline rendering. It uses a single column, shaded section
+headings, and Source Sans 3. Set `[render] template = "classic"` in your config
+to use the previous plain layout. The selection applies to generation and standalone
+rendering, including annotated PDFs. Clean exports contain no annotation marks or report appendix.
+
 **6. Score an edited CV** against the same requirements (the run's date is reused):
 
 ```sh
@@ -148,6 +154,7 @@ weight_nice = 1
 recency_years = 5
 
 [render]
+template = "atsthetic"           # or "classic" for the previous plain layout
 font = "Source Sans 3"
 font_size_pt = 10
 margin_mm = 18

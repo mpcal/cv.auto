@@ -18,3 +18,6 @@ wheels/
 
 # Secrets
 .env
+
+# Local CV previews (personal data)
+output/

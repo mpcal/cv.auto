@@ -32,6 +32,7 @@ class RSkillGroup(Model):
 
 
 class RenderModel(Model):
+    template: Literal["atsthetic", "classic"] = "atsthetic"
     mode: Literal["annotated", "clean"]
     lang: str
     font: str

@@ -63,9 +63,9 @@ class OptimizerSettings(Section):
 
 
 class LayoutSettings(Section):
-    # Calibrated with scripts/calibrate_layout.py (Source Sans 3, 10 pt, 18 mm margins).
+    # Calibrated with scripts/calibrate_layout.py (Atsthetic, Source Sans 3, 10 pt, 18 mm).
     chars_per_line: int = 112
-    lines_per_page: int = 62
+    lines_per_page: int = 57
 
 
 class DocumentSettings(Section):
@@ -90,6 +90,7 @@ class FetchSettings(Section):
 
 
 class RenderSettings(Section):
+    template: Literal["atsthetic", "classic"] = "atsthetic"
     font: str = "Source Sans 3"
     font_size_pt: float = 10
     margin_mm: float = 18
