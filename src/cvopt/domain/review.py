@@ -18,6 +18,7 @@ from cvopt.domain.enums import (
     ProposalAction,
     RecordType,
 )
+from cvopt.domain.records import EducationLink
 
 ProfileField = Literal["name", "email", "phone", "city", "country", "website"]
 
@@ -57,6 +58,20 @@ class CreateEducation(Model):
     start_month: Month | None = None
     end_month: Month | None = None
     grade: str = ""
+    summary: str = ""
+    highlights: list[str] = []
+    links: list[EducationLink] = []
+
+
+class UpdateEducation(Model):
+    """Fill missing descriptive fields and append previously unseen details."""
+
+    action: Literal[ProposalAction.UPDATE_EDUCATION] = ProposalAction.UPDATE_EDUCATION
+    education_id: str
+    grade: str = ""
+    summary: str = ""
+    highlights: list[str] = []
+    links: list[EducationLink] = []
 
 
 class CreateLanguage(Model):
@@ -123,6 +138,7 @@ Payload = Annotated[
     | CreatePosition
     | UpdatePosition
     | CreateEducation
+    | UpdateEducation
     | CreateLanguage
     | CreateCertificate
     | LinkFactSource

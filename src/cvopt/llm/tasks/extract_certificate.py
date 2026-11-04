@@ -51,7 +51,7 @@ def check(inp: CertificateInput, out: CertificateOutput) -> None:
 
 EXTRACT_CERTIFICATE = Task(
     name="extract_certificate",
-    version="1",
+    version="2",
     tier="strong",
     input_model=CertificateInput,
     output_model=CertificateOutput,

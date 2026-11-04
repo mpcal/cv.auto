@@ -44,6 +44,12 @@
   #heading(level: 1, L.education)
   #for e in m.education [
     #line-entry([*#e.title*#if e.detail != "" [, #e.detail]], e.dates)
+    #if e.summary != "" [#e.summary #parbreak()]
+    #for h in e.highlights [- #h]
+    #if e.links.len() > 0 [
+      #e.links.map(l => link(l.url, l.label)).join(" · ")
+      #parbreak()
+    ]
   ]
 ]
 

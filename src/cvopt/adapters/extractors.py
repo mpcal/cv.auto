@@ -53,11 +53,30 @@ class LocalTextExtractor:
                 raise InputError(
                     f"{path.name} has {pages} pages; the limit is {self._s.max_pdf_pages}."
                 )
-            text = "\f".join(page.extract_text() or "" for page in reader.pages)
+            parts = []
+            visible_chars = 0
+            all_urls = []
+            for page in reader.pages:
+                body = page.extract_text() or ""
+                visible_chars += len(body.strip())
+                # Text extraction omits link targets. Keep them available to the
+                # structured extractor without treating them as visible page text.
+                urls = []
+                for ref in page.get("/Annots", []):
+                    action = ref.get_object().get("/A")
+                    if action and (url := action.get_object().get("/URI")) and str(url) not in urls:
+                        urls.append(str(url))
+                if urls:
+                    body += "\nLink targets on this page:\n" + "\n".join(urls)
+                    all_urls.extend(urls)
+                parts.append(body)
+            text = "\f".join(parts)
         except PdfReadError as err:
             raise InputError(f"Cannot read PDF {path.name}: {err}") from err
-        scanned = len(text.strip()) < self._s.min_text_chars
-        return ExtractedText("" if scanned else text, "application/pdf", pages, scanned)
+        scanned = visible_chars < self._s.min_text_chars
+        if scanned:
+            text = "\nLink targets:\n" + "\n".join(all_urls) if all_urls else ""
+        return ExtractedText(text, "application/pdf", pages, scanned)
 
     def _docx(self, path: Path, data: bytes) -> ExtractedText:
         try:
@@ -70,4 +89,11 @@ class LocalTextExtractor:
                 parts += [" | ".join(c.text for c in row.cells) for row in block.rows]
             else:
                 parts.append(block.text)
+        urls = [
+            rel.target_ref
+            for rel in document.part.rels.values()
+            if rel.is_external and rel.reltype.endswith("/hyperlink")
+        ]
+        if urls:
+            parts.append("Link targets:\n" + "\n".join(dict.fromkeys(urls)))
         return ExtractedText("\n".join(parts), DOCX_TYPE, 1, needs_transcription=False)

@@ -578,6 +578,15 @@ class _Pipeline:
             + (1 if facts.languages else 0)
             + 3  # skill group names
         )
+        if self.s.render.education_details == "all":
+            for e in facts.education:
+                if e.summary:
+                    fixed += math.ceil(len(e.summary) / cpl)
+                fixed += sum(0.45 + max(1, math.ceil(len(h) / cpl)) for h in e.highlights)
+                if e.grade:
+                    fixed += 0.45 + math.ceil((len(e.grade) + 7) / cpl)
+                if e.links:
+                    fixed += math.ceil(sum(len(link.label) + 3 for link in e.links) / cpl)
         reserved = 1 + math.ceil(self.s.optimizer.summary_max_sentences * 130 / cpl)
         return self.s.optimizer.page_budget * lpp - fixed - reserved
 
@@ -779,6 +788,9 @@ class _Pipeline:
                 ("startDate", e.start_month),
                 ("endDate", e.end_month),
                 ("score", e.grade),
+                ("summary", e.summary),
+                ("highlights", e.highlights),
+                ("links", [link.model_dump() for link in e.links]),
             ):
                 if value:
                     entry[key] = value

@@ -121,6 +121,7 @@ class ProposalAction(CIStrEnum):
     CREATE_POSITION = "create_position"
     UPDATE_POSITION = "update_position"
     CREATE_EDUCATION = "create_education"
+    UPDATE_EDUCATION = "update_education"
     CREATE_LANGUAGE = "create_language"
     CREATE_CERTIFICATE = "create_certificate"
     LINK_FACT_SOURCE = "link_fact_source"

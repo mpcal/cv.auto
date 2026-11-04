@@ -16,6 +16,7 @@ from cvopt.cli.common import (
     short,
     split_list,
 )
+from cvopt.cli.review import review_batch
 from cvopt.context import UserContext
 from cvopt.domain.enums import ClaimStatus, ClaimType, DegreeLevel, EvidenceKind, Provability
 from cvopt.domain.rules import cefr_level, degree_level, language_code
@@ -134,7 +135,22 @@ EDUCATION_COLUMNS = [
     "start_month",
     "end_month",
     "grade",
+    "summary",
+    "highlights",
+    "links",
 ]
+
+
+def education_links(values: list[str] | None) -> list[dict[str, str]] | None:
+    if values is None:
+        return None
+    links = []
+    for value in values:
+        label, separator, url = value.partition("=")
+        if not separator or not label.strip() or not url.strip():
+            raise InputError("Use --link 'Label=https://example.org/page'.")
+        links.append({"label": label.strip(), "url": url.strip()})
+    return links
 
 
 @education_app.command("list")
@@ -153,6 +169,11 @@ def education_add(
     start: Annotated[str | None, Opt(help="YYYY-MM")] = None,
     end: Annotated[str | None, Opt(help="YYYY-MM")] = None,
     grade: Annotated[str, Opt()] = "",
+    summary: Annotated[str, Opt(help="Department, group, adviser or other descriptive text.")] = "",
+    highlight: Annotated[
+        list[str] | None, Opt(help="Education bullet; repeat for each bullet.")
+    ] = None,
+    link: Annotated[list[str] | None, Opt(help="Label=URL; repeat for each link.")] = None,
 ) -> None:
     fields = {
         "institution": institution,
@@ -162,6 +183,9 @@ def education_add(
         "start_month": start,
         "end_month": end,
         "grade": grade,
+        "summary": summary,
+        "highlights": highlight or [],
+        "links": education_links(link) or [],
     }
     e = run_async(ctx, lambda c, u: c.data.create_education(u, fields), writes=True)
     created("education", e.id)
@@ -178,6 +202,14 @@ def education_edit(
     start: Annotated[str | None, Opt()] = None,
     end: Annotated[str | None, Opt()] = None,
     grade: Annotated[str | None, Opt()] = None,
+    summary: Annotated[str | None, Opt()] = None,
+    highlight: Annotated[
+        list[str] | None, Opt(help="Replace bullets; repeat for each bullet.")
+    ] = None,
+    link: Annotated[
+        list[str] | None, Opt(help="Replace links with Label=URL; repeat for each.")
+    ] = None,
+    clear_links: Annotated[bool, Opt(help="Remove all education links.")] = False,
 ) -> None:
     fields = given(
         institution=institution,
@@ -187,9 +219,31 @@ def education_edit(
         start_month=start,
         end_month=end,
         grade=grade,
+        summary=summary,
+        highlights=highlight,
+        links=[] if clear_links else education_links(link),
     )
     e = run_async(ctx, lambda c, u: c.data.update_education(u, id, fields), writes=True)
     console.print(f"Updated education {short(e.id)}")
+
+
+@education_app.command("refresh")
+def education_refresh(
+    ctx: typer.Context,
+    document: Annotated[str, Opt(help="Previously imported CV, diploma or certificate id.")],
+    accept_all: Annotated[bool, Opt(help="Accept and apply without prompts.")] = False,
+) -> None:
+    """Recover missing education details from an already imported document."""
+
+    async def op(c: Container, u: UserContext) -> None:
+        with console.status("Reading education details…"):
+            result = await c.ingestion.refresh_education(u, document)
+        if result.batch_id:
+            await review_batch(c, u, result.batch_id, accept_all)
+        else:
+            console.print("Education details are already up to date.")
+
+    run_async(ctx, op, writes=True)
 
 
 @education_app.command("rm")

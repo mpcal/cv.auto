@@ -109,6 +109,35 @@ headings, and Source Sans 3. Set `[render] template = "classic"` in your config
 to use the previous plain layout. The selection applies to generation and standalone
 rendering, including annotated PDFs. Clean exports contain no annotation marks or report appendix.
 
+Education includes all original details by default: department, research group/adviser,
+thesis topic, publications, awards, specializations, training, grade and links. These
+are fixed facts; generation reserves space for them and never trims them for job
+relevance. Set `[render] education_details = "compact"` to show only degrees,
+institutions and dates. The setting applies to both templates and clean/annotated
+PDFs; `cv.json` always retains the full education data.
+
+CVs imported before education details were supported need a one-time refresh from
+their stored source document (find the id with `cvopt document list`):
+
+```sh
+uv run cvopt education refresh --document <source-document-id>
+# Review and apply the proposed details, then regenerate the run:
+uv run cvopt run generate <run-folder-or-prefix>
+```
+
+Refresh fills missing descriptions and grades and appends missing bullets/links,
+without overwriting confirmed values or creating duplicate degrees. Use
+`--accept-all` to accept and apply the proposals without prompts. Manual entry is
+also available with `education add|edit --summary "…" --highlight "…"` (repeat
+`--highlight` for each bullet; editing replaces the list). If all fixed facts cannot
+fit the configured page budget, increase `[optimizer] page_budget`; education will
+not be silently removed.
+
+Use `--link "Research demo=https://example.org/demo"` to add a named education link
+(repeat for multiple links); `education edit --link` replaces the links and
+`education edit --clear-links` removes them. In the review editor, lists are shown
+as JSON so punctuation and links survive edits.
+
 **6. Score an edited CV** against the same requirements (the run's date is reused):
 
 ```sh
@@ -155,6 +184,7 @@ recency_years = 5
 
 [render]
 template = "atsthetic"           # or "classic" for the previous plain layout
+education_details = "all"        # or "compact" for degrees, institutions and dates only
 font = "Source Sans 3"
 font_size_pt = 10
 margin_mm = 18

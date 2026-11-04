@@ -64,7 +64,7 @@ class LLMClient(Protocol):
 
 @dataclass(frozen=True)
 class ExtractedText:
-    text: str  # "" when the document needs transcription
+    text: str  # scanned PDFs may still supply hyperlink targets for transcription
     media_type: str
     pages: int
     needs_transcription: bool  # scanned PDF or image: send the file to transcribe_document

@@ -30,7 +30,10 @@ HELP = "[a]ccept  [r]eject  [e]dit  [s]kip  [A]ccept all remaining  [q]uit"
 
 def _fmt(value: Any) -> str:
     if isinstance(value, list):
-        return ", ".join(map(str, value))
+        return json.dumps(
+            [v.model_dump(mode="json") if isinstance(v, BaseModel) else v for v in value],
+            ensure_ascii=False,
+        )
     return "" if value is None else str(value)
 
 
@@ -110,6 +113,8 @@ def _set(data: dict[str, Any], dotted: str, value: Any) -> None:
 
 def _parse(raw: str, current: Any) -> Any:
     if isinstance(current, list):
+        if raw.lstrip().startswith("["):
+            return json.loads(raw)
         return [v.strip() for v in raw.split(",") if v.strip()]
     if raw.strip().lower() == "none":
         return None
@@ -120,16 +125,21 @@ def edit_payload(item: ProposalItem) -> dict[str, Any]:
     """Asks for each field in turn; Enter keeps it. Each value is validated at once."""
     model = item.payload
     data = model.model_dump(mode="json")
-    console.print("Edit: Enter keeps a value; lists are comma-separated; 'none' clears.")
+    console.print(
+        "Edit: Enter keeps a value; lists use JSON or comma-separated text; 'none' clears."
+    )
     for name, current in _editable(model):
         while True:
             raw = Prompt.ask(name, default=_fmt(current), show_default=True)
             candidate = json.loads(json.dumps(data))
-            _set(candidate, name, _parse(raw, current))
             try:
+                _set(candidate, name, _parse(raw, current))
                 type(model).model_validate(candidate)
             except ValidationError as err:
                 console.print(f"[red]{err.errors()[0]['msg']}[/red]")
+                continue
+            except json.JSONDecodeError:
+                console.print("[red]Enter a valid JSON list.[/red]")
                 continue
             data = candidate
             break

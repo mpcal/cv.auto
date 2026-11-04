@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from cvopt.domain.base import Model, Month
 from cvopt.domain.enums import ElementKind
+from cvopt.domain.records import EducationLink
 from cvopt.domain.rules import cefr_level, degree_level, language_code
 from cvopt.domain.text import split_sentences
 
@@ -57,6 +58,11 @@ class JREducation(Lenient):
     startDate: str = ""
     endDate: str = ""
     score: str = ""
+    summary: str = ""
+    highlights: list[str] = []
+    courses: list[str] = []
+    links: list[EducationLink] = []
+    url: str = ""
 
 
 class JRSkill(Lenient):

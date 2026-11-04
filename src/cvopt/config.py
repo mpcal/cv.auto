@@ -91,6 +91,7 @@ class FetchSettings(Section):
 
 class RenderSettings(Section):
     template: Literal["atsthetic", "classic"] = "atsthetic"
+    education_details: Literal["all", "compact"] = "all"
     font: str = "Source Sans 3"
     font_size_pt: float = 10
     margin_mm: float = 18

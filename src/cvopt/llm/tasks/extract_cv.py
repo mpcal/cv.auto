@@ -75,7 +75,7 @@ def check(inp: CVInput, out: CVOutput) -> None:
 
 EXTRACT_CV = Task(
     name="extract_cv",
-    version="1",
+    version="2",
     tier="strong",
     input_model=CVInput,
     output_model=CVOutput,

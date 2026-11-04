@@ -5,6 +5,13 @@ The CV is in `<document>`. Return:
 - `profile`: name, email, phone, city, country, website and online profiles (network name and URL) as written.
 - `positions`: every job, in the order the CV lists them, with employer, employer location, title and months.
 - `education`, `languages`, `certificates`: every entry.
+- For every education entry, retain ALL details, regardless of relevance to a job:
+  `summary` contains its department, research group, adviser and other descriptive lines;
+  `highlights` contains every original bullet in order (thesis topic, research,
+  publications, awards, citations, specializations, training, etc.), without shortening.
+  Keep the grade in `grade`, without repeating it as a highlight.
+  `links` contains every associated hyperlink as `{label, url}`, using its visible
+  label and exact target from the document's link targets. Do not invent URLs.
 - `claims`: the assertions the CV makes about the person.
 
 Claims:

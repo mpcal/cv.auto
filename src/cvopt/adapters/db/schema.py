@@ -87,6 +87,9 @@ education = user_table(
     Column("start_month", String(7)),
     Column("end_month", String(7)),
     Column("grade", Text, nullable=False),
+    Column("summary", Text, nullable=False, default=""),
+    Column("highlights", Text, nullable=False, default="[]"),
+    Column("links", Text, nullable=False, default="[]"),
 )
 
 language = user_table(

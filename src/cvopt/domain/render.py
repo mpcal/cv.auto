@@ -3,6 +3,7 @@
 from typing import Literal
 
 from cvopt.domain.base import Model
+from cvopt.domain.records import EducationLink
 from cvopt.domain.report import ReportRow
 
 
@@ -24,6 +25,9 @@ class REntry(Model):  # education and certificates
     title: str
     detail: str
     dates: str
+    summary: str = ""
+    highlights: list[str] = []
+    links: list[EducationLink] = []
 
 
 class RSkillGroup(Model):

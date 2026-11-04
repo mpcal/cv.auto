@@ -38,6 +38,11 @@ class Position(Model):
     end_month: Month | None  # None = current
 
 
+class EducationLink(Model):
+    label: str
+    url: str
+
+
 class Education(Model):
     id: str
     institution: str
@@ -47,6 +52,9 @@ class Education(Model):
     start_month: Month | None = None
     end_month: Month | None = None
     grade: str = ""
+    summary: str = ""
+    highlights: list[str] = []
+    links: list[EducationLink] = []
 
 
 class Language(Model):

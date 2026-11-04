@@ -70,10 +70,21 @@ def test_fact_records_crud(cli) -> None:  # type: ignore[no-untyped-def]
             "2014-09",
             "--end",
             "2016-08",
+            "--summary",
+            "Department of Computer Science",
+            "--highlight",
+            "Research, teaching and awards",
+            "--link",
+            "Research=https://example.org/research",
         )
     )
     [e] = json.loads(cli("education", "list", "--json"))
     assert e["degree_level"] == "master"
+    assert e["summary"] == "Department of Computer Science"
+    assert e["highlights"] == ["Research, teaching and awards"]
+    assert e["links"] == [{"label": "Research", "url": "https://example.org/research"}]
+    cli("education", "edit", eid, "--clear-links")
+    assert json.loads(cli("education", "list", "--json"))[0]["links"] == []
     cli("education", "edit", eid, "--grade", "5.5")
     assert json.loads(cli("education", "list", "--json"))[0]["grade"] == "5.5"
 

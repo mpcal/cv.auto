@@ -8,7 +8,7 @@ from cvopt.context import UserContext
 from cvopt.errors import InputError
 from cvopt.ports import FileStore, RepositoryFactory
 
-JSON_COLUMNS = {"keywords", "profiles", "payload", "response"}
+JSON_COLUMNS = {"keywords", "profiles", "payload", "response", "highlights", "links"}
 
 
 class AccountService:

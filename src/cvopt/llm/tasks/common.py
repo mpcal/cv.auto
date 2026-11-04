@@ -5,6 +5,7 @@ import re
 
 from cvopt.domain.base import Model
 from cvopt.domain.enums import ClaimType, DegreeLevel
+from cvopt.domain.records import EducationLink
 from cvopt.domain.rules import CEFR_LEVELS
 
 MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -26,6 +27,9 @@ class ExEducation(Model):
     start_month: str
     end_month: str
     grade: str
+    summary: str = ""  # department, research group, adviser; preserve original wording
+    highlights: list[str] = []
+    links: list[EducationLink] = []
 
 
 class ExLanguage(Model):

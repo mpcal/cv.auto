@@ -9,6 +9,7 @@ from cvopt.config import Settings
 from cvopt.domain.candidates import Annotation
 from cvopt.domain.cv import JSONResume, to_month
 from cvopt.domain.enums import Fidelity
+from cvopt.domain.records import EducationLink
 from cvopt.domain.render import RenderModel, REntry, RPosition, RSkillGroup, RStatement
 from cvopt.domain.report import Report
 from cvopt.domain.rules import cefr_level
@@ -122,6 +123,18 @@ def build_render_model(
                 title=" ".join(x for x in (e.studyType, e.area) if x) or e.institution,
                 detail=e.institution if (e.studyType or e.area) else "",
                 dates=fmt_dates(e.startDate, e.endDate, "", open_ended=False),
+                summary=e.summary if settings.render.education_details == "all" else "",
+                highlights=(
+                    [*e.highlights, *e.courses]
+                    + ([f"{lab['grade']}: {e.score}"] if e.score else [])
+                    if settings.render.education_details == "all"
+                    else []
+                ),
+                links=(
+                    [*e.links, *([EducationLink(label=e.institution, url=e.url)] if e.url else [])]
+                    if settings.render.education_details == "all"
+                    else []
+                ),
             )
             for e in cv.education
         ],

@@ -41,6 +41,7 @@ from cvopt.domain.review import (
     ProposalItem,
     ReviewBatch,
     SetProfileField,
+    UpdateEducation,
     UpdatePosition,
 )
 from cvopt.domain.rules import claim_provability, order_positions
@@ -217,13 +218,43 @@ class _Builder:
                 )
         return match.id
 
-    async def education(self, e: ExEducation) -> None:
+    async def education(self, e: ExEducation, *, link_source: bool = True) -> None:
         threshold = self._settings.matching.employer_similarity
         for s in await self._repo.list_education():
+            if any(
+                (a and b and normalize(a) != normalize(b))
+                for a, b in (
+                    (s.area, e.area),
+                    (s.start_month, e.start_month),
+                    (s.end_month, e.end_month),
+                )
+            ):
+                continue
             if s.degree_level == e.degree_level and employer_matches(
                 s.institution, e.institution, threshold
             ):
-                self.out.add(LinkFactSource(record_type=RecordType.EDUCATION, record_id=s.id), s.id)
+                highlights = [
+                    h
+                    for h in e.highlights
+                    if normalize(h) not in {normalize(old) for old in s.highlights}
+                ]
+                links = [link for link in e.links if link.url not in {old.url for old in s.links}]
+                grade, summary = e.grade if not s.grade else "", e.summary if not s.summary else ""
+                if grade or summary or highlights or links:
+                    self.out.add(
+                        UpdateEducation(
+                            education_id=s.id,
+                            grade=grade,
+                            summary=summary,
+                            highlights=highlights,
+                            links=links,
+                        ),
+                        s.id,
+                    )
+                if link_source:
+                    self.out.add(
+                        LinkFactSource(record_type=RecordType.EDUCATION, record_id=s.id), s.id
+                    )
                 return
         self.out.add(
             CreateEducation(
@@ -234,6 +265,9 @@ class _Builder:
                 start_month=e.start_month or None,
                 end_month=e.end_month or None,
                 grade=e.grade,
+                summary=e.summary,
+                highlights=e.highlights,
+                links=e.links,
             )
         )
 
@@ -463,6 +497,8 @@ class IngestionService:
                     TRANSCRIBE_DOCUMENT, TranscribeInput(media_type=extracted.media_type, data=data)
                 )
             ).text
+            if extracted.text:
+                text += "\n" + extracted.text  # hyperlink targets from a scanned PDF
         if not text.strip():
             raise InputError(f"No text found in {path.name}.")
         language = self._detector.detect(text)
@@ -497,6 +533,48 @@ class IngestionService:
                 for seq, (payload, target) in enumerate(builder.out.items, start=1):
                     await repo.insert_item(batch.id, seq, payload, target)
             self._files.save_document(user, doc.id, path.suffix, data)
+        counts = Counter(p.action.value for p, _ in builder.out.items)
+        return IngestResult(doc.id, batch_id, dict(sorted(counts.items())))
+
+    async def refresh_education(self, user: UserContext, document_ref: str) -> IngestResult:
+        """Recover education details from an already imported source, through review."""
+        repo = self._repos.for_user(user)
+        doc = await repo.get_document(document_ref)
+        if doc.kind not in (DocumentKind.CV, DocumentKind.DIPLOMA, DocumentKind.CERTIFICATE):
+            raise InputError("Education refresh needs a CV, diploma or certificate source.")
+        if pending := next(
+            (b for b in await repo.list_batches(BatchStatus.OPEN) if b.document_id == doc.id), None
+        ):
+            raise ConflictError(f"Review or discard the open batch {pending.id} first.")
+        text = doc.extracted_text
+        source = self._files.document_path(user, doc.id, Path(doc.filename).suffix)
+        if source.is_file():
+            extracted = await self._extractor.extract(source)
+            if not extracted.needs_transcription:
+                text = extracted.text
+            elif extracted.text:
+                text += "\n" + extracted.text
+        runner = self._runners.for_user(user)
+        builder = _Builder(repo, runner, self._settings, doc.language)
+        if doc.kind is DocumentKind.CV:
+            education = (
+                await runner.run(EXTRACT_CV, CVInput(text=text, language=doc.language))
+            ).education
+        else:
+            out = await runner.run(
+                EXTRACT_CERTIFICATE,
+                CertificateInput(text=text, language=doc.language, kind=doc.kind.value),
+            )
+            education = [out.education] if out.record_type == "education" else []
+        for entry in education:
+            await builder.education(entry, link_source=False)
+        batch_id = None
+        if builder.out.items:
+            async with repo.transaction():
+                batch = await repo.insert_batch(doc.id)
+                batch_id = batch.id
+                for seq, (payload, target) in enumerate(builder.out.items, start=1):
+                    await repo.insert_item(batch.id, seq, payload, target)
         counts = Counter(p.action.value for p, _ in builder.out.items)
         return IngestResult(doc.id, batch_id, dict(sorted(counts.items())))
 
@@ -666,6 +744,27 @@ async def _apply(repo: Repository, p: Payload, document_id: str, claim_ids: set[
             rec_type, rec_id = RecordType.CERTIFICATE, (await repo.insert_certificate(values)).id
         await repo.insert_fact_source(rec_type, rec_id, document_id)
         return rec_id
+    elif isinstance(p, UpdateEducation):
+        stored_education = await repo.get_education(p.education_id)
+        highlights = list(stored_education.highlights)
+        seen = {normalize(h) for h in highlights}
+        for highlight in p.highlights:
+            if normalize(highlight) not in seen:
+                highlights.append(highlight)
+                seen.add(normalize(highlight))
+        links = {link.url: link.model_dump() for link in stored_education.links}
+        for link in p.links:
+            links.setdefault(link.url, link.model_dump())
+        await repo.update_education(
+            stored_education.id,
+            {
+                "grade": stored_education.grade or p.grade,
+                "summary": stored_education.summary or p.summary,
+                "highlights": highlights,
+                "links": list(links.values()),
+            },
+        )
+        await repo.insert_fact_source(RecordType.EDUCATION, stored_education.id, document_id)
     elif isinstance(p, LinkFactSource):
         await repo.insert_fact_source(p.record_type, p.record_id, document_id)
     elif isinstance(p, CreateClaim):

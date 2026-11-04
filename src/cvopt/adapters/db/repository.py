@@ -37,7 +37,7 @@ from cvopt.ports import Clock
 
 MIN_SUFFIX = 6
 COMMON = {"user_id", "created_at", "updated_at"}
-JSON_COLUMNS = {"keywords", "profiles", "payload"}
+JSON_COLUMNS = {"keywords", "profiles", "payload", "highlights", "links"}
 
 
 def dumps(value: object) -> str:

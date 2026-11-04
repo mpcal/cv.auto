@@ -7,6 +7,7 @@ from anthropic import AsyncAnthropic, transform_schema
 from pydantic import BaseModel, ValidationError
 
 from cvopt.config import LLMSettings
+from cvopt.errors import InputError
 from cvopt.ports import FilePart, LLMResult, TextPart
 
 
@@ -30,9 +31,12 @@ class AnthropicLLMClient:
     def _get(self) -> AsyncAnthropic:
         # Created on first use, so commands without LLM calls need no API key.
         if self._client is None:
-            self._client = AsyncAnthropic(
+            client = AsyncAnthropic(
                 max_retries=self._settings.max_retries, timeout=self._settings.request_timeout_s
             )
+            if client.api_key is None and client.auth_token is None:
+                raise InputError("No Anthropic API key: set ANTHROPIC_API_KEY.")
+            self._client = client
         return self._client
 
     async def complete[T: BaseModel](
