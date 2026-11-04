@@ -45,14 +45,29 @@ def test_missing_explicit_config_raises(tmp_path: Path) -> None:
 def test_layout_defaults_are_calibrated() -> None:
     # Values printed by scripts/calibrate_layout.py; re-run it after changing the template.
     s = load_settings()
-    assert (s.layout.chars_per_line, s.layout.lines_per_page) == (112, 57)
+    assert (s.layout.chars_per_line, s.layout.lines_per_page) == (117, 51)
 
 
 def test_render_template_configuration(tmp_path: Path) -> None:
-    assert load_settings().render.template == "atsthetic"
+    assert load_settings().render.template == "altacv-mod-1"
     cfg = tmp_path / "render.toml"
-    cfg.write_text('[render]\ntemplate = "classic"\n')
-    assert load_settings(cfg).render.template == "classic"
+    cfg.write_text('[render]\ntemplate = "altacv1"\n')
+    assert load_settings(cfg).render.template == "altacv-mod-1"
     cfg.write_text('[render]\ntemplate = "unknown"\n')
     with pytest.raises(InputError):
         load_settings(cfg)
+
+
+@pytest.mark.parametrize("template", ["atsthetic", "classic", "unknown"])
+def test_removed_templates_are_rejected(tmp_path: Path, template: str) -> None:
+    cfg = tmp_path / "render.toml"
+    cfg.write_text(f'[render]\ntemplate = "{template}"\n')
+    with pytest.raises(InputError):
+        load_settings(cfg)
+
+
+def test_render_typography_overrides(tmp_path: Path) -> None:
+    cfg = tmp_path / "render.toml"
+    cfg.write_text('[render]\nfont = "Source Sans 3"\nfont_size_pt = 11\nmargin_mm = 20\n')
+    render = load_settings(cfg).render
+    assert (render.font, render.font_size_pt, render.margin_mm) == ("Source Sans 3", 11, 20)

@@ -7,7 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from cvopt.config import Settings
 from cvopt.domain.candidates import Annotation
-from cvopt.domain.cv import JSONResume, to_month
+from cvopt.domain.cv import JSONResume
 from cvopt.domain.enums import Fidelity
 from cvopt.domain.records import EducationLink
 from cvopt.domain.render import RenderModel, REntry, RPosition, RSkillGroup, RStatement
@@ -26,17 +26,6 @@ MARKS = {Fidelity.EXAGGERATED: "E", Fidelity.INVENTED: "I"}
 def labels(lang: str) -> dict[str, str]:
     table = cast(dict[str, dict[str, str]], load_table("labels"))
     return {**table["en"], **table.get(lang, {})}
-
-
-def fmt_month(value: str) -> str:
-    month = to_month(value) if value else None
-    return f"{month[5:]}/{month[:4]}" if month else ""
-
-
-def fmt_dates(start: str, end: str, present: str, *, open_ended: bool) -> str:
-    a = fmt_month(start)
-    b = fmt_month(end) if end else (present if open_ended else "")
-    return f"{a} – {b}" if a and b else a or b
 
 
 class Marks:
@@ -79,13 +68,9 @@ def build_render_model(
     report: Report | None = None,
 ) -> RenderModel:
     lab = labels(lang)
+    month_names = cast(dict[str, list[str]], load_table("labels")["months"])
     marks = Marks(annotations)
     b = cv.basics
-    location = ", ".join(
-        x for x in (b.location.city, b.location.countryCode or b.location.region) if x
-    )
-    contact = [x for x in (b.email, b.phone, location, b.url) if x]
-    contact += [p.url for p in b.profiles if p.url]
     legend = ""
     if annotations is not None and report is not None:
         legend = lab["legend"].format(
@@ -99,8 +84,8 @@ def build_render_model(
         font_size_pt=settings.render.font_size_pt,
         margin_mm=settings.render.margin_mm,
         labels=lab,
-        name=b.name,
-        contact=contact,
+        months=month_names.get(lang, month_names["en"]),
+        basics=b,
         headline=marks.stmt(b.label, "/basics/label") if b.label else None,
         summary=[
             marks.stmt(s, "/basics/summary", i)
@@ -111,7 +96,8 @@ def build_render_model(
                 title=w.position,
                 employer=w.name,
                 location=w.location,
-                dates=fmt_dates(w.startDate, w.endDate, lab["present"], open_ended=True),
+                start_date=w.startDate,
+                end_date=w.endDate,
                 highlights=[
                     marks.stmt(h, f"/work/{i}/highlights/{j}") for j, h in enumerate(w.highlights)
                 ],
@@ -122,13 +108,15 @@ def build_render_model(
             REntry(
                 title=" ".join(x for x in (e.studyType, e.area) if x) or e.institution,
                 detail=e.institution if (e.studyType or e.area) else "",
-                dates=fmt_dates(e.startDate, e.endDate, "", open_ended=False),
+                start_date=e.startDate,
+                end_date=e.endDate,
                 summary=e.summary if settings.render.education_details == "all" else "",
-                highlights=(
-                    [*e.highlights, *e.courses]
-                    + ([f"{lab['grade']}: {e.score}"] if e.score else [])
-                    if settings.render.education_details == "all"
-                    else []
+                highlights=e.highlights if settings.render.education_details == "all" else [],
+                courses=e.courses if settings.render.education_details == "all" else [],
+                score=(
+                    f"{lab['grade']}: {e.score}"
+                    if e.score and settings.render.education_details == "all"
+                    else ""
                 ),
                 links=(
                     [*e.links, *([EducationLink(label=e.institution, url=e.url)] if e.url else [])]
@@ -148,12 +136,10 @@ def build_render_model(
             for i, s in enumerate(cv.skills)
         ],
         languages=[
-            f"{lg.language} ({cefr_level(lg.fluency) or lg.fluency})" if lg.fluency else lg.language
+            lg.model_copy(update={"fluency": cefr_level(lg.fluency) or lg.fluency})
             for lg in cv.languages
         ],
-        certificates=[
-            REntry(title=c.name, detail=c.issuer, dates=fmt_month(c.date)) for c in cv.certificates
-        ],
+        certificates=cv.certificates,
         legend=legend,
         report_summary=report_summary(report, lab) if report and annotations is not None else [],
         report=report.rows if report and annotations is not None else [],

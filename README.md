@@ -103,17 +103,21 @@ uv run cvopt render <run-folder>/cv.json -o ~/cv-acme.pdf
 uv run cvopt render <run-folder>/cv.json --annotated     # re-create the annotated PDF
 ```
 
-The default PDF layout is adapted from [Atsthetic CV](https://typst.app/universe/package/atsthetic-cv/)
-(MIT), bundled locally for offline rendering. It uses a single column, shaded section
-headings, and Source Sans 3. Set `[render] template = "classic"` in your config
-to use the previous plain layout. The selection applies to generation and standalone
-rendering, including annotated PDFs. Clean exports contain no annotation marks or report appendix.
+The default PDF layout, `altacv-mod-1`, uses [AltaCV 1.7.0](https://typst.app/universe/package/altacv/)
+(MIT), matching the single-column example in `typst-work`: Lato, teal section rules,
+icon-led contacts and dates, and skill tags. The template, its Typst dependencies,
+and all fonts are bundled for offline rendering without system fonts.
+The selection applies to generation and standalone rendering, including annotated
+PDFs. Clean exports contain no annotation marks or report appendix.
+
+`altacv1` is accepted as an alias. The previous `atsthetic` and `classic` layouts
+have been removed; configurations selecting them must use `altacv-mod-1` instead.
 
 Education includes all original details by default: department, research group/adviser,
 thesis topic, publications, awards, specializations, training, grade and links. These
 are fixed facts; generation reserves space for them and never trims them for job
 relevance. Set `[render] education_details = "compact"` to show only degrees,
-institutions and dates. The setting applies to both templates and clean/annotated
+institutions and dates. The setting applies to clean/annotated
 PDFs; `cv.json` always retains the full education data.
 
 CVs imported before education details were supported need a one-time refresh from
@@ -183,11 +187,11 @@ weight_nice = 1
 recency_years = 5
 
 [render]
-template = "atsthetic"           # or "classic" for the previous plain layout
+template = "altacv-mod-1"        # default; "altacv1" is an alias
 education_details = "all"        # or "compact" for degrees, institutions and dates only
-font = "Source Sans 3"
+font = "Lato"
 font_size_pt = 10
-margin_mm = 18
+# margin_mm = 18                # optional uniform override; defaults: x=9, y=15 mm
 ```
 
 See `src/cvopt/config.py` for every setting. Exit codes: 0 success, 1 input error,
@@ -213,4 +217,8 @@ uv run ruff check && uv run ruff format --check && uv run mypy && uv run lint-im
   `uv run alembic revision --autogenerate -m "..."`; migrations run automatically at startup.
 - The design documents are in `masterplan/`.
 
-Fonts: Source Sans 3, © Adobe, SIL Open Font License (`src/cvopt/resources/fonts/LICENSE.md`).
+Fonts: Lato, © Łukasz Dziedzic; Font Awesome Free 7.1.0, © Fonticons; and
+Source Sans 3, © Adobe (available as an explicit override). All use the SIL Open
+Font License; licenses and attribution are bundled beside the font files.
+See `src/cvopt/resources/packages/README.md` for the pinned Typst dependencies
+and the small AltaCV adaptations.

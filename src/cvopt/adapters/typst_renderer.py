@@ -1,4 +1,4 @@
-"""TypstRenderer: compiles the render model with the bundled template and fonts."""
+"""TypstRenderer: compiles with bundled AltaCV packages and fonts, entirely offline."""
 
 import shutil
 import tempfile
@@ -18,17 +18,12 @@ class TypstRenderer:
     def render(self, model: RenderModel, out_path: Path) -> RenderResult:
         with (
             tempfile.TemporaryDirectory() as tmp_dir,
-            as_file(
-                RESOURCES.joinpath(
-                    "templates", "classic.typ" if model.template == "classic" else "cv.typ"
-                )
-            ) as template,
+            as_file(RESOURCES.joinpath("templates", "altacv-mod-1.typ")) as template,
             as_file(RESOURCES.joinpath("fonts")) as fonts,
+            as_file(RESOURCES.joinpath("packages")) as packages,
         ):
             tmp = Path(tmp_dir)
             shutil.copy(template, tmp / "cv.typ")
-            with as_file(RESOURCES.joinpath("templates", "atsthetic.typ")) as theme:
-                shutil.copy(theme, tmp / "atsthetic.typ")
             (tmp / "model.json").write_text(model.model_dump_json(), encoding="utf-8")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             typst.compile(
@@ -37,6 +32,8 @@ class TypstRenderer:
                 root=str(tmp),
                 font_paths=[str(fonts)],
                 ignore_system_fonts=True,
+                package_path=str(packages),
+                package_cache_path=str(tmp / "package-cache"),
                 sys_inputs={"model": "model.json"},
             )
         return RenderResult(path=out_path, pages=len(PdfReader(out_path).pages))

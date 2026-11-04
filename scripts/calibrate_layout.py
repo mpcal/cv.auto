@@ -13,7 +13,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from cvopt.adapters.typst_renderer import TypstRenderer
-from cvopt.config import load_settings
+from cvopt.config import Settings
 from cvopt.domain.cv import JSONResume
 from cvopt.services.render import build_render_model
 
@@ -41,7 +41,7 @@ def cv_with(highlights: list[str]) -> JSONResume:
 
 
 def render_lines(highlights: list[str], out: Path) -> tuple[list[str], int]:
-    settings = load_settings()
+    settings = Settings()
     res = TypstRenderer().render(build_render_model(cv_with(highlights), settings), out)
     reader = PdfReader(res.path)
     return (reader.pages[0].extract_text() or "").splitlines(), res.pages

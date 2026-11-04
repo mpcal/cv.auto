@@ -1,0 +1,119 @@
+{
+    "basics": {
+        "name": "Alice Example",
+        "label": "Lead Data Scientist",
+        "email": "alice.example@example.org",
+        "phone": "+41 79 123 45 67",
+        "profiles": [
+            {
+                "network": "LinkedIn",
+                "username": "alice-example",
+                "url": "https://www.linkedin.com/in/alice-example/"
+            },
+            {
+                "network": "GitHub",
+                "username": "alice-example",
+                "url": "https://github.com/alice-example"
+            }
+        ],
+        "location": {
+            "address": "Rebacherstrasse 3",
+            "postalCode": "8118",
+            "city": "Zurich",
+            "countryCode": "CH"
+        },
+        "summary": "Data scientist with nine years of experience in forecasting and machine learning. I lead small teams and work closely with business stakeholders."
+    },
+    "focusAreas": [
+        "Demand forecasting and predictive modelling for retail and telecom clients.",
+        "MLOps with MLflow and Kubernetes.",
+        "Leading data science teams and collaborating with business stakeholders."
+    ],
+    "work": [
+        {
+            "name": "Nordlicht Analytics AG",
+            "position": "Lead Data Scientist",
+            "location": "Zurich",
+            "startDate": "2021-03",
+            "highlights": [
+                "Led a team of 6 data scientists building demand-forecasting models for retail clients.",
+                "Cut forecast error by 18% by introducing gradient-boosted models in Python (LightGBM).",
+                "Introduced MLOps practices with MLflow and Kubernetes."
+            ]
+        },
+        {
+            "name": "Bergwerk Software GmbH",
+            "position": "Data Scientist",
+            "location": "Munich",
+            "startDate": "2017-09",
+            "endDate": "2021-02",
+            "highlights": [
+                "Migrated the analytics data platform from MySQL to PostgreSQL, reducing query times by 40%.",
+                "Built churn-prediction models in Python and scikit-learn for 3 telecom customers."
+            ]
+        },
+        {
+            "name": "Calder & Finch Ltd",
+            "position": "Junior Analyst",
+            "location": "London",
+            "startDate": "2015-07",
+            "endDate": "2017-08",
+            "highlights": [
+                "Built weekly sales dashboards in Tableau and SQL."
+            ]
+        }
+    ],
+    "education": [
+        {
+            "institution": "ETH Zurich",
+            "studyType": "MSc Computer Science",
+            "startDate": "2013-09",
+            "endDate": "2015-06"
+        }
+    ],
+    "skills": [
+        {
+            "name": "Data science",
+            "keywords": [
+                "Python",
+                "SQL",
+                "PostgreSQL",
+                "LightGBM",
+                "MLflow"
+            ]
+        },
+        {
+            "name": "Collaboration",
+            "keywords": [
+                "stakeholder management"
+            ]
+        }
+    ],
+    "languages": [
+        {
+            "language": "English",
+            "fluency": "C2",
+            "rating": 4.5
+        },
+        {
+            "language": "German",
+            "fluency": "native",
+            "rating": 5
+        }
+    ],
+    "awards": [
+        {
+            "title": "Koenderink Prize (example)",
+            "date": "2024-10",
+            "awarder": "European Conference on Computer Vision (ECCV)",
+            "summary": "Example entry: recognition for the lasting impact of a computer vision research paper."
+        }
+    ],
+    "certificates": [
+        {
+            "name": "AWS Certified Solutions Architect – Associate",
+            "issuer": "Amazon Web Services",
+            "date": "2022-05"
+        }
+    ]
+}

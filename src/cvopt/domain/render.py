@@ -1,8 +1,9 @@
-"""The flat render model the Typst template lays out (P3 §8.1)."""
+"""The annotated presentation model adapted to AltaCV by the Typst template."""
 
 from typing import Literal
 
 from cvopt.domain.base import Model
+from cvopt.domain.cv import JRBasics, JRCertificate, JRLanguage
 from cvopt.domain.records import EducationLink
 from cvopt.domain.report import ReportRow
 
@@ -17,16 +18,20 @@ class RPosition(Model):
     title: str
     employer: str
     location: str
-    dates: str  # "04/2019 – 12/2022", or "03/2023 – present" from labels
+    start_date: str
+    end_date: str
     highlights: list[RStatement]
 
 
-class REntry(Model):  # education and certificates
+class REntry(Model):  # education, including presentation-filtered details
     title: str
     detail: str
-    dates: str
+    start_date: str
+    end_date: str
     summary: str = ""
     highlights: list[str] = []
+    courses: list[str] = []
+    score: str = ""
     links: list[EducationLink] = []
 
 
@@ -36,22 +41,22 @@ class RSkillGroup(Model):
 
 
 class RenderModel(Model):
-    template: Literal["atsthetic", "classic"] = "atsthetic"
+    template: Literal["altacv-mod-1"] = "altacv-mod-1"
     mode: Literal["annotated", "clean"]
     lang: str
     font: str
     font_size_pt: float
-    margin_mm: float
+    margin_mm: float | None
     labels: dict[str, str]  # labels.toml section for lang, English as fallback
-    name: str
-    contact: list[str]
+    months: list[str]
+    basics: JRBasics
     headline: RStatement | None
     summary: list[RStatement]
     work: list[RPosition]
     education: list[REntry]
     skills: list[RSkillGroup]
-    languages: list[str]  # "German (C1)"
-    certificates: list[REntry]
+    languages: list[JRLanguage]
+    certificates: list[JRCertificate]
     legend: str  # annotated only
     report_summary: list[str]  # annotated only: score, splits, logistics, timeline gaps
     report: list[ReportRow]  # annotated only

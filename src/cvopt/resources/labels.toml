@@ -2,13 +2,13 @@
 
 [en]
 summary = "Summary"
-experience = "Professional Experience"
+experience = "Experience"
 education = "Education"
 grade = "Grade"
 skills = "Skills"
 languages = "Languages"
-certificates = "Certificates"
-present = "present"
+certificates = "Certifications"
+present = "Present"
 report = "Report"
 legend = "Annotated target CV for {title} at {company}, generated {date}. I = invented, E = exaggerated; numbers refer to report rows."
 score = "Score"
@@ -49,3 +49,7 @@ col_provability = "Belegbarkeit"
 col_impact = "Wirkung (pp)"
 col_requirement = "Anforderung"
 col_kind = "Zeilenart"
+
+[months]
+en = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+de = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]

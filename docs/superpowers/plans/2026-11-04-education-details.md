@@ -56,12 +56,20 @@ Implemented and reviewed inline, with an independent code review. Review finding
 for degree identity, structured list editing, DOCX links, manual link controls and
 stale-proposal deduplication were reproduced in regression tests and corrected.
 
-The full offline suite reports 152 passed, 1 failed, 5 deselected. The remaining
+The full offline suite reports 156 passed, 1 failed, 5 deselected. The remaining
 `tests/unit/test_text.py::test_split_roundtrip` failure for `['Aa vs.', 'Aa.']`
 also reproduces using `HEAD:src/cvopt/domain/text.py`; those unrelated files were
 left unchanged. Ruff lint/format, mypy and all five import contracts pass.
 
 Local education-only previews using the supplied source text were rendered and
-visually verified for both templates. Original user data and the existing run
-remain untouched. Sending the private source to the configured model for a live
-refresh was rejected by automatic approval review and requires explicit consent.
+visually verified for both templates. The user subsequently explicitly authorized
+the live source refresh and run regeneration. The database and previous run were
+backed up, both existing degrees were updated with their original descriptions,
+six PhD bullets, two MSc bullets, grade and four links, and the run was regenerated.
+The clean PDF remains two pages; the annotated PDF includes a five-page report.
+
+Visual QA additionally caught a degree split across pages. Both templates now
+measure education entries and keep an entry together when it fits on a page,
+while allowing longer entries to span pages. Page-boundary and long-entry tests
+pass for both templates. Every stored education detail and link was verified in
+both final PDFs, and all pages were visually inspected.

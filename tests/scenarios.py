@@ -347,7 +347,9 @@ async def check_generation(c: Container, user: UserContext, run_dir: Path) -> No
 
     # Text extracted from either PDF contains every statement, in reading order.
     for pdf in (clean.path, run_dir / "cv-annotated.pdf"):
-        text = flat(" ".join(p.extract_text() or "" for p in PdfReader(pdf).pages))
+        text = flat(
+            " ".join(p.extract_text(extraction_mode="layout") or "" for p in PdfReader(pdf).pages)
+        )
         pos = 0
         for e in elements:
             found = text.find(flat(e.text), pos)

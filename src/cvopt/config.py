@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from cvopt.errors import InputError
 
@@ -63,9 +63,9 @@ class OptimizerSettings(Section):
 
 
 class LayoutSettings(Section):
-    # Calibrated with scripts/calibrate_layout.py (Atsthetic, Source Sans 3, 10 pt, 18 mm).
-    chars_per_line: int = 112
-    lines_per_page: int = 57
+    # Calibrated with scripts/calibrate_layout.py (AltaCV, Lato, 10 pt, native margins).
+    chars_per_line: int = 117
+    lines_per_page: int = 51
 
 
 class DocumentSettings(Section):
@@ -90,11 +90,16 @@ class FetchSettings(Section):
 
 
 class RenderSettings(Section):
-    template: Literal["atsthetic", "classic"] = "atsthetic"
+    template: Literal["altacv-mod-1"] = "altacv-mod-1"
     education_details: Literal["all", "compact"] = "all"
-    font: str = "Source Sans 3"
+    font: str = "Lato"
     font_size_pt: float = 10
-    margin_mm: float = 18
+    margin_mm: float | None = None
+
+    @field_validator("template", mode="before")
+    @classmethod
+    def canonical_template(cls, value: object) -> object:
+        return "altacv-mod-1" if value == "altacv1" else value
 
 
 class Settings(Section):

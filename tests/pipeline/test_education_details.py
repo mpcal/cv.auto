@@ -75,9 +75,9 @@ def cv_json() -> dict:
     }
 
 
-@pytest.mark.parametrize("template", ["atsthetic", "classic"])
+@pytest.mark.parametrize("template", ["altacv-mod-1"])
 @pytest.mark.parametrize("annotated", [False, True])
-def test_full_education_is_the_default_in_both_pdf_templates(
+def test_full_education_is_the_default_in_clean_and_annotated_pdfs(
     tmp_path: Path, template: str, annotated: bool
 ) -> None:
     settings = Settings()
@@ -104,16 +104,53 @@ def test_full_education_is_the_default_in_both_pdf_templates(
     assert "https://example.org/demo" in urls
 
 
-@pytest.mark.parametrize("template", ["atsthetic", "classic"])
+@pytest.mark.parametrize("template", ["altacv-mod-1"])
 def test_compact_mode_hides_only_education_details(tmp_path: Path, template: str) -> None:
     config = tmp_path / "config.toml"
     config.write_text(f'[render]\ntemplate = "{template}"\neducation_details = "compact"\n')
     settings = load_settings(config)
     model = build_render_model(JSONResume.model_validate(cv_json()), settings)
     text = pdf_text(TypstRenderer().render(model, tmp_path / "compact.pdf").path)
-    assert "PhD Computer Vision" in text and "03/2006 – 10/2010" in text
+    assert "PhD Computer Vision" in text and "Mar 2006 – Oct 2010" in text
     assert "Computer Vision Group" not in text
     assert "With distinction" not in text and "Research demo" not in text
+
+
+@pytest.mark.parametrize("template", ["altacv-mod-1"])
+def test_education_entry_stays_together_at_page_boundary(tmp_path: Path, template: str) -> None:
+    data = cv_json()
+    data["work"] = [
+        {
+            "name": "Example",
+            "position": "Engineer",
+            "startDate": "2020-01",
+            "highlights": [
+                f"Work detail {i}: Developed and maintained data pipelines." for i in range(44)
+            ],
+        }
+    ]
+    settings = Settings()
+    settings.render.template = template
+    result = TypstRenderer().render(
+        build_render_model(JSONResume.model_validate(data), settings), tmp_path / "boundary.pdf"
+    )
+    pages = [page.extract_text() or "" for page in PdfReader(result.path).pages]
+    assert any("Loop closure" in text and "93 patent" in text for text in pages)
+
+
+@pytest.mark.parametrize("template", ["altacv-mod-1"])
+def test_education_longer_than_a_page_remains_readable(tmp_path: Path, template: str) -> None:
+    data = cv_json()
+    data["education"][0]["highlights"] = [f"Research detail {i:03d}" for i in range(150)]
+    settings = Settings()
+    settings.render.template = template
+    result = TypstRenderer().render(
+        build_render_model(JSONResume.model_validate(data), settings), tmp_path / "long.pdf"
+    )
+    assert result.pages >= 2
+    text = pdf_text(result.path)
+    for i in range(150):
+        assert f"Research detail {i:03d}" in text
 
 
 def extraction() -> dict:
