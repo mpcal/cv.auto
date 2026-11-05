@@ -4,6 +4,7 @@ from cvopt.domain.base import Model
 from cvopt.domain.enums import ClaimType
 from cvopt.llm.task import Task
 from cvopt.llm.tasks.common import (
+    ExAward,
     ExCertificate,
     ExEducation,
     ExLanguage,
@@ -51,6 +52,7 @@ class CVOutput(Model):
     education: list[ExEducation]
     languages: list[ExLanguage]
     certificates: list[ExCertificate]
+    awards: list[ExAward] = []
     claims: list[ExCVClaim]
 
 
@@ -67,6 +69,8 @@ def check(inp: CVInput, out: CVOutput) -> None:
         check_language(lang, f"languages[{i}]")
     for i, c in enumerate(out.certificates):
         check_month(c.issued_month, f"certificates[{i}].issued_month")
+    for i, a in enumerate(out.awards):
+        check_month(a.awarded_month, f"awards[{i}].awarded_month")
     for i, cl in enumerate(out.claims):
         check_claim_text(cl.text, cl.keywords, f"claims[{i}]")
         if not -1 <= cl.position < len(out.positions):
@@ -75,7 +79,7 @@ def check(inp: CVInput, out: CVOutput) -> None:
 
 EXTRACT_CV = Task(
     name="extract_cv",
-    version="2",
+    version="3",
     tier="strong",
     input_model=CVInput,
     output_model=CVOutput,

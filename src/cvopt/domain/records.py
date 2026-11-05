@@ -26,6 +26,8 @@ class Profile(Model):
     city: str = ""
     country: str = ""
     website: str = ""
+    linkedin: str = ""  # profile URL as written
+    github: str = ""  # profile URL as written
     profiles: list[OnlineProfile] = []
 
 
@@ -69,6 +71,14 @@ class Certificate(Model):
     issuer: str = ""
     issued_month: Month | None = None
     url: str = ""
+
+
+class Award(Model):
+    id: str
+    title: str
+    awarder: str = ""
+    awarded_month: Month | None = None
+    summary: str = ""
 
 
 class Claim(Model):

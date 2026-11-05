@@ -20,7 +20,7 @@ from cvopt.domain.enums import (
 )
 from cvopt.domain.records import EducationLink
 
-ProfileField = Literal["name", "email", "phone", "city", "country", "website"]
+ProfileField = Literal["name", "email", "phone", "city", "country", "website", "linkedin", "github"]
 
 
 class SetProfileField(Model):
@@ -88,6 +88,14 @@ class CreateCertificate(Model):
     url: str = ""
 
 
+class CreateAward(Model):
+    action: Literal[ProposalAction.CREATE_AWARD] = ProposalAction.CREATE_AWARD
+    title: str
+    awarder: str = ""
+    awarded_month: Month | None = None
+    summary: str = ""
+
+
 class LinkFactSource(Model):
     action: Literal[ProposalAction.LINK_FACT_SOURCE] = ProposalAction.LINK_FACT_SOURCE
     record_type: RecordType
@@ -141,6 +149,7 @@ Payload = Annotated[
     | UpdateEducation
     | CreateLanguage
     | CreateCertificate
+    | CreateAward
     | LinkFactSource
     | CreateClaim
     | AddEvidence

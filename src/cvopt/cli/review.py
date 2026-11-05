@@ -13,8 +13,9 @@ from cvopt.bootstrap import Container
 from cvopt.cli.common import console, short
 from cvopt.context import UserContext
 from cvopt.domain.enums import BatchStatus, Decision
-from cvopt.domain.records import Certificate, Claim, Education, Language, Position
+from cvopt.domain.records import Award, Certificate, Claim, Education, Language, Position
 from cvopt.domain.review import (
+    CreateAward,
     CreateCertificate,
     CreateClaim,
     CreateEducation,
@@ -50,6 +51,8 @@ def _label(record: BaseModel) -> str:
             return f"{record.language_code} {record.level}"
         case Certificate() | CreateCertificate():
             return " · ".join(filter(None, [record.name, record.issuer]))
+        case Award() | CreateAward():
+            return " · ".join(filter(None, [record.title, record.awarder]))
         case Claim() | CreateClaim():
             return record.text if len(record.text) <= 80 else record.text[:79] + "…"
     return ""
@@ -64,6 +67,7 @@ async def record_labels(
         *await c.data.list_education(user),
         *await c.data.list_languages(user),
         *await c.data.list_certificates(user),
+        *await c.data.list_awards(user),
         *[cw.claim for cw in await c.data.list_claims(user)],
     ]
     labels = {r.id: _label(r) for r in records}  # type: ignore[attr-defined]

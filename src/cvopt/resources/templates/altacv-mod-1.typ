@@ -62,6 +62,13 @@
   skills: m.skills.map(g => (name: g.name, keywords: g.keywords.map(stmt))),
   languages: m.languages,
   certificates: m.certificates,
+  // One line per award: title · awarder · date, then the summary.
+  awards: m.awards.map(a => {
+    let parts = a.date.split("-")
+    let date = if parts.len() == 2 { m.months.at(int(parts.at(1)) - 1) + " " + parts.at(0) }
+      else { a.date }
+    (title: (a.title, a.awarder, date).filter(x => x != "").join(" · "), summary: a.summary)
+  }),
 )
 #alta(cv, labels: (
   lang: m.lang,
@@ -70,6 +77,7 @@
   languages: L.languages,
   education: L.education,
   certificates: L.certificates,
+  awards: L.awards,
   present: L.present,
   months: m.months,
 ), preferences: (

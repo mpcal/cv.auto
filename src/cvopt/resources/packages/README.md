@@ -29,6 +29,8 @@ Each package retains its own LICENSE and typst.toml.
 - Show certificate issuers even when upstream singleton grouping would hide them,
   and allow large issuer groups to flow across pages.
 - Preserve textual language fluency instead of inferring dot ratings.
+- Show skill group names as plain labels in a column of their own; only the
+  skills themselves are pills.
 
 The wrapper retains the original package layout, uses `columnRatio: 1`, and
 applies the `-0.15em` Font Awesome adjustment from `typst-work/main.typ`.

@@ -35,7 +35,15 @@ from cvopt.domain.enums import (
 from cvopt.domain.enums import RequirementCategory as C
 from cvopt.domain.jd import JobDescription, Requirement
 from cvopt.domain.optimizer import Optimizer, Selection, SelectionParams, tie_key
-from cvopt.domain.records import Certificate, Claim, Education, Language, Position, Profile
+from cvopt.domain.records import (
+    Award,
+    Certificate,
+    Claim,
+    Education,
+    Language,
+    Position,
+    Profile,
+)
 from cvopt.domain.report import DroppedClaim, Report, StatementInfo, build_report, report_csv
 from cvopt.domain.rules import (
     Vocabulary,
@@ -98,6 +106,8 @@ SLOT_KIND = {
 }
 CLASSIFY_BATCH = 10
 TRANSLATE_BATCH = 20
+SKILL_BREADTH = 3  # skills shown per skill the optimizer chose
+SKILL_MAX_CHARS = 40  # longer skill claims are sentences, not keywords
 
 
 def dump(data: object) -> str:
@@ -113,6 +123,7 @@ class Facts:
     education: list[Education]
     languages: list[Language]
     certificates: list[Certificate]
+    awards: list[Award]
     claims: dict[str, Claim]  # confirmed claims, text in the JD's language
     original_text: dict[str, str]  # claim id -> stored text
     fact_provability: dict[tuple[RecordType, str], Provability]
@@ -128,6 +139,7 @@ class Pool:
     discarded: dict[str, str] = field(default_factory=dict)  # id -> why
     inferable: dict[str, bool] = field(default_factory=dict)
     filler: set[str] = field(default_factory=set)  # only usable as filler
+    extra: set[str] = field(default_factory=set)  # irrelevant skills, only for breadth
     counter: int = 0
 
     def new_id(self, prefix: str) -> str:
@@ -146,6 +158,7 @@ class Pool:
             for c in self.cands.values()
             if c.id not in self.discarded
             and c.id not in self.filler
+            and c.id not in self.extra
             and (not slots or c.slot in slots)
         ]
 
@@ -202,6 +215,7 @@ class _Pipeline:
         self.relevance: dict[str, dict[str, float]] = {}  # claim id -> req id -> value
         self.blocked: set[str] = set()  # candidates dropped by the validate/render loop
         self.fallback: set[str] = set()  # unmodified summary sentences of last resort
+        self.widened: set[str] = set()  # skills added for breadth only
 
     # --- step 1: load ------------------------------------------------------------------
 
@@ -229,6 +243,7 @@ class _Pipeline:
             education=education,
             languages=languages,
             certificates=certificates,
+            awards=await repo.list_awards(),
             claims={c.id: c for c in claims},
             original_text={c.id: c.text for c in claims},
             fact_provability=fact_prov,
@@ -347,6 +362,7 @@ class _Pipeline:
         assertion_key: str | None = None,
         inferable: bool = False,
         filler: bool = False,
+        extra: bool = False,
     ) -> Candidate:
         prefix = {Slot.HIGHLIGHT: "h", Slot.SKILL: "k", Slot.HEADLINE: "t", Slot.SUMMARY: "s"}
         c = Candidate(
@@ -364,6 +380,8 @@ class _Pipeline:
         self.pool.add(c, intended, inferable=inferable)
         if filler:
             self.pool.filler.add(c.id)
+        if extra:
+            self.pool.extra.add(c.id)
         return c
 
     def jd_spelling(self, text: str) -> str:
@@ -421,6 +439,14 @@ class _Pipeline:
                     Fidelity(v.fidelity),
                     pid,
                 )
+        # Irrelevant skills, kept out of scoring, only to show the breadth of the profile.
+        for c in sorted(facts.claims.values(), key=lambda c: c.id):
+            if c.type is not ClaimType.SKILL or self.relevant(c.id):
+                continue
+            if normalize(c.text) in seen_skills or len(c.text) > SKILL_MAX_CHARS:
+                continue
+            seen_skills.add(normalize(c.text))
+            self.candidate(facts, Slot.SKILL, c.text, [c.id], Fidelity.UNMODIFIED, None, extra=True)
 
     async def _variants(self, pos: Position, claims: list[Claim]) -> Any:
         return await self.runner.run(
@@ -569,12 +595,19 @@ class _Pipeline:
 
     def budget(self, facts: Facts) -> float:
         lpp, cpl = self.s.layout.lines_per_page, self.s.layout.chars_per_line
-        sections = 2 + bool(facts.education) + bool(facts.languages) + bool(facts.certificates)
+        sections = (
+            2
+            + bool(facts.education)
+            + bool(facts.languages)
+            + bool(facts.certificates)
+            + bool(facts.awards)
+        )
         fixed = (
             4  # name, contact, spacing
             + 2.2 * (sections + 1)  # headings incl. skills
             + 1.6 * len(facts.positions)
             + 1.3 * (len(facts.education) + len(facts.certificates))
+            + sum(1.3 + math.ceil(len(a.summary) / cpl) for a in facts.awards)
             + (1 if facts.languages else 0)
             + 3  # skill group names
         )
@@ -758,6 +791,40 @@ class _Pipeline:
             picked += 1
         return sel
 
+    def widen_skills(self, facts: Facts, fixed: list[CVElement], sel: Selection) -> Selection:
+        """More skills than the optimizer chose, so the CV does not look tailored: up to
+        SKILL_BREADTH times as many, most relevant first; fewer once some had to go for
+        the page budget."""
+        chosen = sum(c.slot is Slot.SKILL for c in sel.chosen)
+        dropped = len(self.widened & self.blocked)
+        count = (SKILL_BREADTH - 1) * chosen - dropped
+        if count <= 0:
+            return sel
+
+        def relevance(c: Candidate) -> float:
+            return max(
+                (v for s in c.source_claim_ids for v in self.relevance.get(s, {}).values()),
+                default=0.0,
+            )
+
+        extras = sorted(
+            (
+                c
+                for c in self.pool.cands.values()
+                if c.slot is Slot.SKILL
+                and c.source_claim_ids
+                and c.fidelity in (Fidelity.UNMODIFIED, Fidelity.REPHRASED)
+                and len(c.text) <= SKILL_MAX_CHARS
+                and c.id not in self.blocked
+                and c.id not in self.pool.discarded
+            ),
+            key=lambda c: (-relevance(c), *tie_key(c)),
+        )
+        before = {c.id for c in sel.chosen}
+        sel = self.optimizer(facts, fixed).widen(sel, extras, count, self.budget(facts))
+        self.widened |= {c.id for c in sel.chosen} - before
+        return sel
+
     def _take(
         self, sel: Selection, chosen: list[Candidate], c: Candidate, gain: float, alt: float
     ) -> None:
@@ -778,7 +845,7 @@ class _Pipeline:
         return [(g.name, g.keywords) for g in out.groups]
 
     def fact_sections(self, facts: Facts) -> dict[str, Any]:
-        """Education, languages and certificates exactly as stored."""
+        """Education, languages, certificates and awards exactly as stored."""
         education = []
         for e in facts.education:
             entry: dict[str, Any] = {"institution": e.institution}
@@ -806,7 +873,23 @@ class _Pipeline:
                 if value:
                     entry[key] = value
             certificates.append(entry)
-        return {"education": education, "languages": languages, "certificates": certificates}
+        awards = []
+        for a in facts.awards:
+            entry = {"title": a.title}
+            for key, value in (
+                ("date", a.awarded_month),
+                ("awarder", a.awarder),
+                ("summary", a.summary),
+            ):
+                if value:
+                    entry[key] = value
+            awards.append(entry)
+        return {
+            "education": education,
+            "languages": languages,
+            "certificates": certificates,
+            "awards": awards,
+        }
 
     def basics(self, facts: Facts, headline: str, summary: list[str]) -> dict[str, Any]:
         p = facts.profile
@@ -825,8 +908,23 @@ class _Pipeline:
             loc["countryCode" if len(p.country) == 2 else "region"] = p.country
         if loc:
             b["location"] = loc
-        if p.profiles:
-            b["profiles"] = [{"network": x.network, "url": x.url} for x in p.profiles]
+        profiles = [
+            {
+                "network": network,
+                "username": url.rstrip("/").rsplit("/", 1)[-1],
+                "url": url if "://" in url else f"https://{url}",
+            }
+            for network, url in (("LinkedIn", p.linkedin), ("GitHub", p.github))
+            if url
+        ]
+        taken = {x["network"].lower() for x in profiles}
+        profiles += [
+            {"network": x.network, "url": x.url}
+            for x in p.profiles
+            if x.network.lower() not in taken
+        ]
+        if profiles:
+            b["profiles"] = profiles
         return b
 
     def work(self, facts: Facts, highlights: dict[str, list[Candidate]]) -> list[dict[str, Any]]:
@@ -872,6 +970,7 @@ class _Pipeline:
         ]
         cv["languages"] = facts_json["languages"]
         cv["certificates"] = facts_json["certificates"]
+        cv["awards"] = facts_json["awards"]
         cv = {k: v for k, v in cv.items() if v or k == "basics"}
         placed: dict[tuple[str, int | None], Candidate] = {}
         if heads:
@@ -918,6 +1017,7 @@ class _Pipeline:
         for iteration in range(1, self.s.optimizer.max_render_iterations + 1):
             sel = self.select(facts, fixed)
             sel = self.choose_summary(facts, fixed, sel, summary_options)
+            sel = self.widen_skills(facts, fixed, sel)
             self.selection = sel
             done = await self.assemble_and_check(facts, sel)
             if done:
@@ -1191,7 +1291,7 @@ class _Pipeline:
                 if self.value(r.id, f"cand:{c.id}") > 0
             }
             why = (
-                "selected"
+                ("selected for breadth" if c.id in self.widened else "selected")
                 if c.id in chosen
                 else self.pool.discarded.get(c.id)
                 or self.selection.reasons.get(c.id)

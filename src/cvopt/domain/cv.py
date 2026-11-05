@@ -82,6 +82,13 @@ class JRCertificate(Lenient):
     url: str = ""
 
 
+class JRAward(Lenient):
+    title: str = ""
+    date: str = ""
+    awarder: str = ""
+    summary: str = ""
+
+
 class JSONResume(Lenient):
     basics: JRBasics = JRBasics()
     work: list[JRWork] = []
@@ -89,6 +96,7 @@ class JSONResume(Lenient):
     skills: list[JRSkill] = []
     languages: list[JRLanguage] = []
     certificates: list[JRCertificate] = []
+    awards: list[JRAward] = []
     meta: dict[str, Any] = {}
 
 

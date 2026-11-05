@@ -3,7 +3,7 @@
 from typing import Literal
 
 from cvopt.domain.base import Model
-from cvopt.domain.cv import JRBasics, JRCertificate, JRLanguage
+from cvopt.domain.cv import JRAward, JRBasics, JRCertificate, JRLanguage
 from cvopt.domain.records import EducationLink
 from cvopt.domain.report import ReportRow
 
@@ -57,6 +57,7 @@ class RenderModel(Model):
     skills: list[RSkillGroup]
     languages: list[JRLanguage]
     certificates: list[JRCertificate]
+    awards: list[JRAward]
     legend: str  # annotated only
     report_summary: list[str]  # annotated only: score, splits, logistics, timeline gaps
     report: list[ReportRow]  # annotated only

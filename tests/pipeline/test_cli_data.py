@@ -101,7 +101,16 @@ def test_fact_records_crud(cli) -> None:  # type: ignore[no-untyped-def]
     cli("certificate", "edit", cid, "--issuer", "Amazon")
     assert json.loads(cli("certificate", "list", "--json"))[0]["issuer"] == "Amazon"
 
-    for group, rid in [("education", eid), ("language", lid), ("certificate", cid)]:
+    aid = created_id(cli("award", "add", "--title", "Best Paper", "--date", "2020-06"))
+    cli("award", "edit", aid, "--awarder", "CVPR")
+    assert json.loads(cli("award", "list", "--json"))[0]["awarder"] == "CVPR"
+
+    for group, rid in [
+        ("education", eid),
+        ("language", lid),
+        ("certificate", cid),
+        ("award", aid),
+    ]:
         cli(group, "rm", rid)
         assert json.loads(cli(group, "list", "--json")) == []
 

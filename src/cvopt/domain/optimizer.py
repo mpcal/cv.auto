@@ -165,3 +165,20 @@ class Optimizer:
                 sel.lines += pick.lines
                 sel.reasons.pop(pick.id, None)
         return sel
+
+    def widen(
+        self, sel: Selection, extras: Sequence[Candidate], count: int, budget: float
+    ) -> Selection:
+        """Adds up to `count` of `extras`, in the given order, that fit the budget."""
+        added = 0
+        for c in extras:
+            if added >= count:
+                break
+            if c in sel.chosen or self._eligible(c, sel, budget) is not None:
+                continue
+            sel.chosen.append(c)
+            sel.gains[c.id] = self.total(sel.chosen) - self.total(sel.chosen[:-1])
+            sel.lines += c.lines
+            sel.reasons.pop(c.id, None)
+            added += 1
+        return sel

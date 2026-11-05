@@ -5,6 +5,7 @@ The CV is in `<document>`. Return:
 - `profile`: name, email, phone, city, country, website and online profiles (network name and URL) as written.
 - `positions`: every job, in the order the CV lists them, with employer, employer location, title and months.
 - `education`, `languages`, `certificates`: every entry.
+- `awards`: every entry of a dedicated awards, honors or prizes section, with title, awarder, month and summary as written. Awards mentioned only inside another section (an education bullet, a job highlight) stay there and are not repeated in `awards`.
 - For every education entry, retain ALL details, regardless of relevance to a job:
   `summary` contains its department, research group, adviser and other descriptive lines;
   `highlights` contains every original bullet in order (thesis topic, research,

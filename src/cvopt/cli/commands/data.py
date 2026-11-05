@@ -1,4 +1,4 @@
-"""Data commands (F2): profile, positions, education, languages, certificates,
+"""Data commands (F2): profile, positions, education, languages, certificates, awards,
 claims, evidence and documents."""
 
 from typing import Annotated, Any
@@ -30,6 +30,7 @@ position_app = typer.Typer(help="Manage positions.", no_args_is_help=True)
 education_app = typer.Typer(help="Manage education entries.", no_args_is_help=True)
 language_app = typer.Typer(help="Manage languages.", no_args_is_help=True)
 certificate_app = typer.Typer(help="Manage certificates.", no_args_is_help=True)
+award_app = typer.Typer(help="Manage awards.", no_args_is_help=True)
 claim_app = typer.Typer(help="Manage claims.", no_args_is_help=True)
 evidence_app = typer.Typer(help="Add and remove evidence.", no_args_is_help=True)
 document_app = typer.Typer(help="List and delete source documents.", no_args_is_help=True)
@@ -40,6 +41,7 @@ APPS = {
     "education": education_app,
     "language": language_app,
     "certificate": certificate_app,
+    "award": award_app,
     "claim": claim_app,
     "evidence": evidence_app,
     "document": document_app,
@@ -345,6 +347,50 @@ def certificate_edit(
 def certificate_rm(ctx: typer.Context, id: str) -> None:
     rid = run_async(ctx, lambda c, u: c.data.delete_certificate(u, id), writes=True)
     console.print(f"Deleted certificate {short(rid)}")
+
+
+# --- awards ------------------------------------------------------------------------
+
+
+@award_app.command("list")
+def award_list(ctx: typer.Context, as_json: JsonOpt = False) -> None:
+    rows = run_async(ctx, lambda c, u: c.data.list_awards(u), writes=False)
+    print_records(
+        "Awards", rows, ["id", "title", "awarder", "awarded_month", "summary"], as_json=as_json
+    )
+
+
+@award_app.command("add")
+def award_add(
+    ctx: typer.Context,
+    title: Annotated[str, Opt()],
+    awarder: Annotated[str, Opt()] = "",
+    date: Annotated[str | None, Opt(help="YYYY-MM")] = None,
+    summary: Annotated[str, Opt()] = "",
+) -> None:
+    fields = {"title": title, "awarder": awarder, "awarded_month": date, "summary": summary}
+    award = run_async(ctx, lambda c, u: c.data.create_award(u, fields), writes=True)
+    created("award", award.id)
+
+
+@award_app.command("edit")
+def award_edit(
+    ctx: typer.Context,
+    id: str,
+    title: Annotated[str | None, Opt()] = None,
+    awarder: Annotated[str | None, Opt()] = None,
+    date: Annotated[str | None, Opt()] = None,
+    summary: Annotated[str | None, Opt()] = None,
+) -> None:
+    fields = given(title=title, awarder=awarder, awarded_month=date, summary=summary)
+    award = run_async(ctx, lambda c, u: c.data.update_award(u, id, fields), writes=True)
+    console.print(f"Updated award {short(award.id)}")
+
+
+@award_app.command("rm")
+def award_rm(ctx: typer.Context, id: str) -> None:
+    rid = run_async(ctx, lambda c, u: c.data.delete_award(u, id), writes=True)
+    console.print(f"Deleted award {short(rid)}")
 
 
 # --- claims ------------------------------------------------------------------------

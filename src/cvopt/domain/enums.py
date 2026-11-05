@@ -124,6 +124,7 @@ class ProposalAction(CIStrEnum):
     UPDATE_EDUCATION = "update_education"
     CREATE_LANGUAGE = "create_language"
     CREATE_CERTIFICATE = "create_certificate"
+    CREATE_AWARD = "create_award"
     LINK_FACT_SOURCE = "link_fact_source"
     CREATE_CLAIM = "create_claim"
     ADD_EVIDENCE = "add_evidence"
@@ -150,6 +151,7 @@ class RecordType(CIStrEnum):
     EDUCATION = "education"
     LANGUAGE = "language"
     CERTIFICATE = "certificate"
+    AWARD = "award"
 
 
 class RowKind(CIStrEnum):

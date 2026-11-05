@@ -7,6 +7,7 @@ from typing import Any
 from cvopt.context import UserContext
 from cvopt.domain.enums import ClaimStatus, ClaimType, EvidenceKind, Origin, Provability, RecordType
 from cvopt.domain.records import (
+    Award,
     Certificate,
     Claim,
     Education,
@@ -91,7 +92,7 @@ class DataService:
             await repo.delete_fact_sources(RecordType.POSITION, pos.id)
             return await repo.delete_position(pos.id)
 
-    # --- education, languages, certificates -------------------------------------
+    # --- education, languages, certificates, awards -------------------------------------
 
     async def list_education(self, user: UserContext) -> list[Education]:
         return await self._repos.for_user(user).list_education()
@@ -145,6 +146,22 @@ class DataService:
         async with repo.transaction():
             rid = await repo.delete_certificate(ref)
             await repo.delete_fact_sources(RecordType.CERTIFICATE, rid)
+            return rid
+
+    async def list_awards(self, user: UserContext) -> list[Award]:
+        return await self._repos.for_user(user).list_awards()
+
+    async def create_award(self, user: UserContext, fields: dict[str, Any]) -> Award:
+        return await self._repos.for_user(user).insert_award(fields)
+
+    async def update_award(self, user: UserContext, ref: str, fields: dict[str, Any]) -> Award:
+        return await self._repos.for_user(user).update_award(ref, fields)
+
+    async def delete_award(self, user: UserContext, ref: str) -> str:
+        repo = self._repos.for_user(user)
+        async with repo.transaction():
+            rid = await repo.delete_award(ref)
+            await repo.delete_fact_sources(RecordType.AWARD, rid)
             return rid
 
     # --- claims ------------------------------------------------------------------

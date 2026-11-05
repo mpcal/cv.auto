@@ -61,8 +61,11 @@ uv run cvopt evidence add <claim-id> --kind reference_person --reference "Dr. Ja
 ```
 
 Ids show as their last 8 characters; any unique suffix of at least 6 characters works.
-`cvopt position|education|language|certificate list|add|edit|rm` and `cvopt profile show|set`
-manage the rest by hand.
+`cvopt position|education|language|certificate|award list|add|edit|rm` and
+`cvopt profile show|set` manage the rest by hand, e.g.
+`cvopt profile set linkedin linkedin.com/in/you` (also `github`) or
+`cvopt award add --title "Best Paper Award" --awarder CVPR --date 2020-06`. Awards appear in
+their own section of every CV; a CV's dedicated awards section is extracted on ingestion.
 
 **3. Take in a job description.** From a URL, a PDF or a text file:
 

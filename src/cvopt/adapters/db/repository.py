@@ -22,6 +22,7 @@ from cvopt.domain.enums import (
     RecordType,
 )
 from cvopt.domain.records import (
+    Award,
     Certificate,
     Claim,
     Education,
@@ -281,6 +282,21 @@ class UserRepository:
 
     async def delete_certificate(self, ref: str) -> str:
         return await self._delete_by_ref(s.certificate, ref)
+
+    async def list_awards(self) -> list[Award]:
+        return await self._list(s.award, Award)
+
+    async def get_award(self, ref: str) -> Award:
+        return await self._get(s.award, Award, ref)
+
+    async def insert_award(self, values: dict[str, Any]) -> Award:
+        return await self._insert(s.award, Award, values)
+
+    async def update_award(self, ref: str, values: dict[str, Any]) -> Award:
+        return await self._update(s.award, Award, ref, values)
+
+    async def delete_award(self, ref: str) -> str:
+        return await self._delete_by_ref(s.award, ref)
 
     # --- fact sources ----------------------------------------------------------
 

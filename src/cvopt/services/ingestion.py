@@ -29,6 +29,7 @@ from cvopt.domain.records import Claim, Position, Profile
 from cvopt.domain.review import (
     AddEvidence,
     Conflict,
+    CreateAward,
     CreateCertificate,
     CreateClaim,
     CreateEducation,
@@ -48,7 +49,7 @@ from cvopt.domain.rules import claim_provability, order_positions
 from cvopt.domain.text import normalize
 from cvopt.errors import ConflictError, InputError
 from cvopt.llm.runner import TaskRunner, TaskRunnerFactory
-from cvopt.llm.tasks.common import ExCertificate, ExEducation, ExLanguage, ExPosition
+from cvopt.llm.tasks.common import ExAward, ExCertificate, ExEducation, ExLanguage, ExPosition
 from cvopt.llm.tasks.extract_certificate import EXTRACT_CERTIFICATE, CertificateInput
 from cvopt.llm.tasks.extract_cv import EXTRACT_CV, CVInput, CVOutput
 from cvopt.llm.tasks.extract_reference_letter import (
@@ -73,7 +74,7 @@ from cvopt.services.data import recompute_provability
 
 ITEM_REF = re.compile(r"^\$item:(\d+)$")
 PAYLOAD = TypeAdapter[Payload](Payload)
-PROFILE_FIELDS = ("name", "email", "phone", "city", "country", "website")
+PROFILE_FIELDS = ("name", "email", "phone", "city", "country", "website", "linkedin", "github")
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,20 @@ class _Builder:
             )
         )
 
+    async def award(self, a: ExAward) -> None:
+        for s in await self._repo.list_awards():
+            if normalize(s.title) == normalize(a.title):
+                self.out.add(LinkFactSource(record_type=RecordType.AWARD, record_id=s.id), s.id)
+                return
+        self.out.add(
+            CreateAward(
+                title=a.title,
+                awarder=a.awarder,
+                awarded_month=a.awarded_month or None,
+                summary=a.summary,
+            )
+        )
+
     # --- claims ---------------------------------------------------------------------
 
     async def claims_for(
@@ -378,7 +393,13 @@ class _Builder:
         out: CVOutput = await self._runner.run(
             EXTRACT_CV, CVInput(text=text, language=self._language)
         )
-        self.profile_fields(out.profile.model_dump())
+        links = {
+            name: p.url
+            for p in reversed(out.profile.profiles)
+            for name in ("linkedin", "github")
+            if name in p.network.lower() or name in p.url.lower()
+        }
+        self.profile_fields({**out.profile.model_dump(), **links})
         position_ids = [self.position(p) for p in out.positions]
         for e in out.education:
             await self.education(e)
@@ -386,6 +407,8 @@ class _Builder:
             await self.language_record(lang)
         for c in out.certificates:
             await self.certificate(c)
+        for a in out.awards:
+            await self.award(a)
         evidence = EvidenceDraft(kind=EvidenceKind.OWN_CV)
         await self.claims_for(
             [
@@ -734,12 +757,14 @@ async def _apply(repo: Repository, p: Payload, document_id: str, claim_ids: set[
         }
         if fill:
             await repo.update_position(pos.id, fill)
-    elif isinstance(p, CreateEducation | CreateLanguage | CreateCertificate):
+    elif isinstance(p, CreateEducation | CreateLanguage | CreateCertificate | CreateAward):
         values = p.model_dump(exclude={"action"})
         if isinstance(p, CreateEducation):
             rec_type, rec_id = RecordType.EDUCATION, (await repo.insert_education(values)).id
         elif isinstance(p, CreateLanguage):
             rec_type, rec_id = RecordType.LANGUAGE, (await repo.insert_language(values)).id
+        elif isinstance(p, CreateAward):
+            rec_type, rec_id = RecordType.AWARD, (await repo.insert_award(values)).id
         else:
             rec_type, rec_id = RecordType.CERTIFICATE, (await repo.insert_certificate(values)).id
         await repo.insert_fact_source(rec_type, rec_id, document_id)

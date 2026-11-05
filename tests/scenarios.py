@@ -295,7 +295,9 @@ async def check_generation(c: Container, user: UserContext, run_dir: Path) -> No
         assert a["text"] == texts[k]
 
     claims = {r.claim.id: r.claim for r in await c.data.list_claims(user)}
-    selected = [candidates[cid] for cid in candidates if candidates[cid]["status"] == "selected"]
+    selected = [
+        candidates[cid] for cid in candidates if candidates[cid]["status"].startswith("selected")
+    ]
     assert len(selected) == len(annotations)
     for a in annotations:
         sources: list[Claim] = [claims[s] for s in a["source_claim_ids"]]

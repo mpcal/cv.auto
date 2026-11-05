@@ -17,6 +17,13 @@ async def test_golden_generation_meets_p1_criteria(golden: Container, alice: Use
     for run_dir in runs.values():
         await check_generation(golden, alice, run_dir)
 
+    # Skills beyond the optimizer's choice show the breadth of the profile.
+    for run_dir in runs.values():
+        cands = json.loads((run_dir / "candidates.json").read_text())
+        status = [c["status"] for c in cands if c["slot"] == "skill"]
+        chosen = status.count("selected")
+        assert chosen < status.count("selected for breadth") + chosen <= 3 * chosen
+
     de = json.loads((runs["de"] / "cv.json").read_text())
     assert de["languages"][0]["language"] in {"Englisch", "Deutsch", "Französisch"}
     # The doctorate the JD requires stays an uncovered requirement, listed as a gap.

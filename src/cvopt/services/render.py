@@ -140,6 +140,7 @@ def build_render_model(
             for lg in cv.languages
         ],
         certificates=cv.certificates,
+        awards=cv.awards,
         legend=legend,
         report_summary=report_summary(report, lab) if report and annotations is not None else [],
         report=report.rows if report and annotations is not None else [],

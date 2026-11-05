@@ -66,6 +66,8 @@ profile = Table(
     Column("city", Text, nullable=False, default=""),
     Column("country", Text, nullable=False, default=""),
     Column("website", Text, nullable=False, default=""),
+    Column("linkedin", Text, nullable=False, default=""),
+    Column("github", Text, nullable=False, default=""),
     Column("profiles", Text, nullable=False, default="[]"),  # JSON list of network and url
 )
 
@@ -104,6 +106,14 @@ certificate = user_table(
     Column("issuer", Text, nullable=False),
     Column("issued_month", String(7)),
     Column("url", Text, nullable=False),
+)
+
+award = user_table(
+    "award",
+    Column("title", Text, nullable=False),
+    Column("awarder", Text, nullable=False),
+    Column("awarded_month", String(7)),
+    Column("summary", Text, nullable=False),
 )
 
 source_document = user_table(

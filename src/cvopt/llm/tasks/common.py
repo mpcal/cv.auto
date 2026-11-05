@@ -44,6 +44,13 @@ class ExCertificate(Model):
     url: str
 
 
+class ExAward(Model):
+    title: str
+    awarder: str
+    awarded_month: str
+    summary: str
+
+
 class ExSkillClaim(Model):
     text: str
     keywords: list[str]
