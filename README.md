@@ -1,10 +1,26 @@
 # cvopt — CV optimizer
 
-cvopt builds a CV tailored to one job description from facts you have confirmed about
-yourself. You feed it your documents (CV, reference letters, diplomas); it extracts
+cvopt builds an ideal target CV for one job description and explains the gaps against
+your confirmed profile and recorded evidence. You feed it your documents (CV, reference letters, diplomas); it extracts
 positions, records and claims, and you review every proposal before anything is stored.
 For each job description it then writes a JSON Resume CV that maximizes an ATS-style
 match score within two pages, an annotation file, a report, and PDFs.
+
+Reports lead with two independent measures: the **target CV score** includes the ideal
+CV's aspirational statements and placement; **profile-supported coverage** scores all
+confirmed held claims with medium/high provability and stored fixed facts, without a
+page limit or placement discount. A self declaration is not independent verification.
+The signed target-minus-profile difference can be negative. Requirements list all
+matching support and target statements separately from score-winning shares, with
+original wording, current or stale sources, drop reasons, and static next actions.
+Gap labels describe uncertainty in the recorded profile, not a conclusion about your
+actual capability. Logistics remain separate and unscored.
+
+Each generation pins its original facts, claims and evidence in `profile-snapshot.json`.
+Stale and unconfirmed assertions can explain a gap but never add profile coverage.
+Repeated quotations appear once in the annotated PDF evidence appendix; JSON preserves
+full excerpts and their relationships. External CV reports and legacy runs without
+matching provenance show profile coverage as unavailable, never as zero.
 
 Generated statements are labelled honestly. Every statement is *unmodified*, *rephrased*,
 *exaggerated* or *invented*, with a *provability* from `high` (backed by a reference letter,
@@ -93,9 +109,10 @@ regenerating or rescoring is fast and reproducible. The run folder then holds:
 | --- | --- |
 | `cv.json` | The CV, valid JSON Resume, no annotations inside. |
 | `annotations.json` | Per statement: fidelity, provability, source claims, requirements won, impact. |
-| `report.json`, `report.csv` | Score, gaps and dropped claims, one row each. |
+| `report.json`, `report.csv` | Explained target/profile metrics, requirement coverage, selected/gap/dropped rows, and source provenance. |
 | `cv-annotated.pdf` | The CV with `E`/`I` marks and row numbers, and the report as appendix. |
 | `candidates.json` | Every candidate statement and why it was or was not chosen. |
+| `profile-snapshot.json` | Original profile facts and claims, current/stale source links, and a material-content fingerprint. |
 
 `cvopt run go --url …` does steps 3 and 4 in one go.
 
@@ -165,6 +182,91 @@ each statement's impact is the points it wins, and the report lists the missing 
 requirement as gaps. It approximates keyword-and-meaning ATS matchers; it is not any
 vendor's score.
 
+## Find runs and inspect usage
+
+```sh
+uv run cvopt run list
+uv run cvopt run show <run-folder-or-prefix>
+uv run cvopt run list --json
+uv run cvopt run show <run-folder-or-prefix> --json --out run-details.json
+```
+
+Discovery uses only the selected user's local run directory and needs no API key. It
+shows publication and last-attempt status/dates, saved target and optional full-profile
+coverage scores, usage, and available artifact paths, including both `cv.pdf` and
+`cv-annotated.pdf`. Older runs remain readable; missing scores, usage and artifacts
+stay unavailable. A failed regeneration leaves the prior complete publication selected.
+A post-publication diagnostic error is shown separately as `published_with_error`;
+a selected publication remains usable when attempt diagnostics could not be updated.
+
+Generation reports stage durations and task/cache counters on terminal stderr. Progress
+is silent off-terminal; JSON stdout contains one complete value even with `--out`.
+Observers are optional local callbacks; no telemetry is transmitted.
+
+Published `usage.json` records new billing for that generation operation, including
+profile coverage, context matching and target scoring calls. `intake-usage.json` records
+the JD's original intake separately; `usage.json` retains that contribution without
+billing it again on regeneration. Failed generation summaries are in `last-attempt.json`.
+Application cache hits incur no new model billing, so a cache-only operation has known
+zero new usage/cost even without rates. Historical cache creation cost remains unknown.
+Provider cache reads and writes are separate billable token categories.
+
+`known_subtotal_usd` includes measured tokens with configured prices. `total_usd` stays
+null unless all usage and needed rates are known; no model prices are assumed. A missing
+token field differs from measured zero. SDK retries use the actual raw-response retry
+count: final response tokens remain a known subtotal, and hidden earlier-attempt usage
+makes the total incomplete. Provider failures without observable usage remain incomplete.
+These values describe configured token costs, not an invoice reconciliation.
+
+## Compare roles against your current profile
+
+```sh
+uv run cvopt run compare <run-one> <run-two> [more-runs...]
+uv run cvopt run compare <run-one> <run-two> --as-of 2026-06-30 --json
+uv run cvopt run compare <run-one> <run-two> --out comparison-export
+```
+
+Comparison reads each run's **edited** `requirements.json` and evaluates all roles against
+one current profile snapshot, one date (today by default), and the current scoring settings.
+It ranks profile-supported coverage descending, must-requirement weighted missing points
+ascending, then stable run ID ascending. Complete confirmed medium/high held claims and
+stored fixed facts contribute at neutral placement without a page budget. Overlapping
+experience periods count once. Coverage measures recorded support, not actual capability.
+Comparison can need model judgments or verified translations; cached/no-model cases need
+no API key. An unverifiable confirmed translation aborts comparison.
+
+Saved aspirational target scores retain their generation dates and remain separate from
+this ranking. Profile fingerprint, edited requirements, effective generation configuration,
+and date are checked for staleness independently; missing legacy metadata is `null`/unknown.
+Scoring, optimizer, layout/render, model/provider and prompt identity affect configuration
+staleness. Prices, logging and storage paths do not. Comparison never regenerates a target.
+
+Recurring gaps require the same complete normalized requirement signature in at least two
+distinct selected roles. Identity includes text, category, keywords/synonyms and all typed
+threshold/qualification fields; IDs and importance are excluded. Overlapping keywords alone
+are insufficient. Duplicate rows retain their IDs and weighted missing points but do not
+create additional roles. Priority is summed weighted missing percentage points across role
+instances: each role's scored requirements normalize to 100 points. These are support gaps,
+with no learning-time estimates or guided workflow.
+
+Only `--out DIR` writes `comparison.json` and `comparison.csv`; JSON includes the shared
+snapshot, role support/provenance, saved-score staleness and new comparison operation usage.
+CSV contains role rankings, per-role requirement coverage/gaps and recurring-gap instances.
+Comparison usage spans all roles and remains separate from saved JD intake/generation costs.
+
+Fixed-record document links become stale after material edits. Explicitly reconfirm the
+current record against the old owned document with:
+
+```sh
+uv run cvopt evidence reconfirm <fact-source-id> --fact-source
+uv run cvopt evidence reconfirm <fact-source-id> --fact-source --excerpt 'exact source quote'
+```
+
+The command revalidates the current record/source, retains the stale attachment, and creates
+a fresh valid link. Reverting a record alone does not reactivate its old links. Without
+`--fact-source`, the command retains its existing claim-evidence behavior. Re-ingesting an
+identical document remains a duplicate skip.
+
 ## Configuration
 
 Optional: `~/.config/cvopt/config.toml` (or `--config FILE`, or `CVOPT_CONFIG`). Unknown
@@ -197,6 +299,19 @@ font_size_pt = 10
 # margin_mm = 18                # optional uniform override; defaults: x=9, y=15 mm
 ```
 
+Optional per-model prices use the exact returned model ID and USD per million tokens.
+All rates must be finite and nonnegative. Omit unknown rates; zero means an explicitly
+configured zero rate. For example, this is a **synthetic arithmetic example**, not a
+provider price list:
+
+```toml
+[llm.prices."example-model"]
+input = 2.0
+output = 4.0
+cache_read = 0.5
+cache_write = 1.0
+```
+
 See `src/cvopt/config.py` for every setting. Exit codes: 0 success, 1 input error,
 2 model failure, 3 the rules or the page budget cannot be met, 4 internal error (details in
 `<data_root>/cvopt.log`, which never contains your documents' text).
@@ -218,7 +333,14 @@ uv run ruff check && uv run ruff format --check && uv run mypy && uv run lint-im
   template change.
 - Schema changes: edit `src/cvopt/adapters/db/schema.py`, then
   `uv run alembic revision --autogenerate -m "..."`; migrations run automatically at startup.
-- The design documents are in `masterplan/`.
+  Migrations `0004` and `0005` are forward-only: the old schemas cannot represent retained
+  assertion and review history, so Alembic refuses a downgrade before changing the database.
+  Rolling back the application requires a separately managed pre-upgrade database copy; the application
+  does not create backup copies automatically.
+  Pending proposals from before `0005` have unknown original assertions and require renewed
+  review before attaching source support. Bulk acceptance cannot resolve stale-target conflicts.
+- The design documents are in `masterplan/`; current service and isolation contracts are in
+  [`docs/development.md`](docs/development.md).
 
 Fonts: Lato, © Łukasz Dziedzic; Font Awesome Free 7.1.0, © Fonticons; and
 Source Sans 3, © Adobe (available as an explicit override). All use the SIL Open

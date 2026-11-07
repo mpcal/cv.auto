@@ -107,6 +107,9 @@ def _repo(c: Container, user: UserContext) -> UserRepository:
 async def golden(container: Container, alice: UserContext) -> AsyncIterator[Container]:
     """The offline container with every recording loaded into Alice's LLM cache."""
     await recordings.load(_repo(container, alice))
+    from tests.synthetic_golden import install_synthetic_golden
+
+    install_synthetic_golden(container.runners)
     yield container
 
 

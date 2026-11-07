@@ -3,7 +3,7 @@
 import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import ColumnElement, Table, delete, func, insert, select, update
@@ -13,32 +13,62 @@ from ulid import ULID
 
 from cvopt.adapters.db import schema as s
 from cvopt.context import UserContext
+from cvopt.domain.assertions import (
+    assertion_fingerprint,
+    check_documentary_assertion,
+    check_evidence_support,
+    check_fact_support,
+    claim_assertion,
+)
 from cvopt.domain.enums import (
     BatchStatus,
     ClaimStatus,
     ClaimType,
     Decision,
+    EvidenceKind,
     Provability,
     RecordType,
 )
 from cvopt.domain.records import (
+    FACT_MODELS,
     Award,
     Certificate,
     Claim,
+    ClaimAssertion,
     Education,
     Evidence,
+    FactAssertion,
+    FactSource,
+    InvalidAttachment,
     Language,
     Position,
     Profile,
     SourceDocument,
 )
-from cvopt.domain.review import Payload, ProposalItem, ReviewBatch
+from cvopt.domain.review import (
+    Payload,
+    ProposalItem,
+    ReviewBatch,
+    ReviewConflict,
+    ReviewContext,
+    created_assertion,
+    review_target,
+)
+from cvopt.domain.rules import claim_provability
 from cvopt.errors import InputError, NotFoundError
 from cvopt.ports import Clock
 
 MIN_SUFFIX = 6
 COMMON = {"user_id", "created_at", "updated_at"}
-JSON_COLUMNS = {"keywords", "profiles", "payload", "highlights", "links"}
+JSON_COLUMNS = {
+    "keywords",
+    "profiles",
+    "payload",
+    "highlights",
+    "links",
+    "assertion",
+    "review_context",
+}
 
 
 def dumps(value: object) -> str:
@@ -51,8 +81,44 @@ def to_row(model: BaseModel) -> dict[str, Any]:
 
 
 def from_row[M: BaseModel](model: type[M], row: dict[str, Any]) -> M:
-    data = {k: json.loads(v) if k in JSON_COLUMNS else v for k, v in row.items()}
-    return model.model_validate({k: v for k, v in data.items() if k not in COMMON})
+    data = {k: json.loads(v) if k in JSON_COLUMNS and v is not None else v for k, v in row.items()}
+    ignored = COMMON | ({"action"} if model is ProposalItem else set())
+    return model.model_validate({k: v for k, v in data.items() if k not in ignored})
+
+
+def attachment_from_row[M: BaseModel](
+    model: type[M], row: dict[str, Any], attachment_type: Literal["evidence", "fact_source"]
+) -> M | InvalidAttachment:
+    try:
+        return from_row(model, row)
+    except (ValueError, TypeError) as err:
+        # Never put Pydantic input values or arbitrary field names in diagnostics.
+        # The untouched raw row is available only in explicit JSON/history exports.
+        if isinstance(err, ValidationError):
+            fields = []
+            for error in err.errors(include_input=False, include_context=False)[:8]:
+                field = str(error["loc"][0]) if error["loc"] else "record"
+                if field not in model.model_fields:
+                    field = "record" if not error["loc"] else "unexpected_field"
+                fields.append(f"{field} ({error['type']})")
+            detail = ", ".join(dict.fromkeys(fields))
+        else:
+            detail = "assertion (invalid_json)"
+        return InvalidAttachment(
+            id=row["id"],
+            attachment_type=attachment_type,
+            validation_error=f"Invalid {attachment_type} fields: {detail}",
+            raw=row,
+        )
+
+
+def export_assertion(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass  # Preserve damaged snapshot bytes as raw text, never discard history.
+    return value
 
 
 class UserRepository:
@@ -130,6 +196,35 @@ class UserRepository:
     ) -> list[M]:
         return [from_row(model, r) for r in await self._rows(table, *where)]
 
+    async def _read_attachments[M: BaseModel](
+        self, table: Table, model: type[M], *where: ColumnElement[bool]
+    ) -> tuple[list[M], list[InvalidAttachment]]:
+        typed: list[M] = []
+        invalid: list[InvalidAttachment] = []
+        attachment_type: Literal["evidence", "fact_source"] = (
+            "evidence" if table is s.evidence else "fact_source"
+        )
+        for row in await self._rows(table, *where):
+            attachment = attachment_from_row(model, row, attachment_type)
+            if isinstance(attachment, InvalidAttachment):
+                invalid.append(attachment)
+            else:
+                typed.append(attachment)
+        return typed, invalid
+
+    async def _get_attachment[M: BaseModel](self, table: Table, model: type[M], ref: str) -> M:
+        rid = await self._resolve(table, ref)
+        typed, invalid = await self._read_attachments(table, model, table.c.id == rid)
+        if invalid:
+            guidance = (
+                "; remove malformed evidence with evidence rm." if table is s.evidence else "."
+            )
+            raise InputError(
+                f"{invalid[0].validation_error}; inspect invalid-history diagnostics "
+                f"or export the attachment{guidance}"
+            )
+        return typed[0]
+
     async def _insert[M: BaseModel](
         self, table: Table, model: type[M], values: dict[str, Any]
     ) -> M:
@@ -149,6 +244,21 @@ class UserRepository:
             rid = await self._resolve(table, ref)
             current = from_row(model, (await self._rows(table, table.c.id == rid))[0])
             new = _validated(model, {**current.model_dump(), **values})
+            if (
+                isinstance(current, Position | Education | Language | Certificate | Award)
+                and isinstance(new, Position | Education | Language | Certificate | Award)
+                and assertion_fingerprint(current) != assertion_fingerprint(new)
+            ):
+                async with self._connect() as conn:
+                    await conn.execute(
+                        update(s.fact_source)
+                        .where(
+                            self._mine(s.fact_source),
+                            s.fact_source.c.record_type == table.name,
+                            s.fact_source.c.record_id == rid,
+                        )
+                        .values(state="stale", updated_at=self._now())
+                    )
             async with self._connect() as conn:
                 await conn.execute(
                     update(table)
@@ -176,6 +286,9 @@ class UserRepository:
             )
             hit = await conn.scalar(q)
             return None if hit is None else str(hit)
+
+    async def cache_delete(self, key: str) -> None:
+        await self._delete(s.llm_cache, s.llm_cache.c.key == key)
 
     async def cache_put(
         self, key: str, task: str, prompt_version: str, model: str, response: str
@@ -300,33 +413,87 @@ class UserRepository:
 
     # --- fact sources ----------------------------------------------------------
 
+    async def _fact(self, record_type: RecordType, ref: str) -> FactAssertion:
+        return await self._get(s.metadata.tables[record_type.value], FACT_MODELS[record_type], ref)
+
     async def insert_fact_source(
-        self, record_type: RecordType, record_id: str, document_id: str
-    ) -> None:
-        now = self._now()
-        async with self._connect() as conn:
-            await self._ensure_user(conn)
-            await conn.execute(
-                sqlite_insert(s.fact_source)
-                .values(
-                    id=str(ULID()),
-                    user_id=self._user.user_id,
-                    created_at=now,
-                    updated_at=now,
-                    record_type=record_type.value,
-                    record_id=record_id,
-                    document_id=document_id,
-                )
-                .on_conflict_do_nothing()
+        self, record_type: RecordType, record_id: str, document_id: str, *, excerpt: str = ""
+    ) -> FactSource:
+        async with self.transaction():
+            fact = await self._fact(record_type, record_id)
+            doc = await self.get_document(document_id)
+            try:
+                check_fact_support(doc, excerpt)
+            except ValueError as err:
+                raise InputError(str(err)) from err
+            for link in await self.list_fact_sources(record_type, fact.id, active_only=True):
+                if link.document_id == doc.id and link.excerpt == excerpt:
+                    return link
+            return await self._insert(
+                s.fact_source,
+                FactSource,
+                dict(
+                    record_type=record_type,
+                    record_id=fact.id,
+                    document_id=doc.id,
+                    excerpt=excerpt,
+                    assertion=fact,
+                    state="active",
+                    snapshot_origin="captured",
+                ),
             )
 
+    async def get_fact_source(self, ref: str) -> FactSource:
+        return await self._get_attachment(s.fact_source, FactSource, ref)
+
+    async def list_fact_sources(
+        self,
+        record_type: RecordType | None = None,
+        record_id: str | None = None,
+        *,
+        active_only: bool = False,
+    ) -> list[FactSource]:
+        where = []
+        if record_type is not None:
+            where.append(s.fact_source.c.record_type == record_type.value)
+        if record_id is not None:
+            where.append(s.fact_source.c.record_id == record_id)
+        if active_only:
+            where.append(s.fact_source.c.state == "active")
+        links, _ = await self._read_attachments(s.fact_source, FactSource, *where)
+        if not active_only:
+            return links
+        valid = []
+        for link in links:
+            if link.state != "active" or link.assertion is None:
+                continue
+            try:
+                fact = await self._fact(link.record_type, link.record_id)
+                check_fact_support(await self.get_document(link.document_id), link.excerpt)
+                if assertion_fingerprint(fact) == assertion_fingerprint(link.assertion):
+                    valid.append(link)
+            except (ValueError, InputError, NotFoundError):
+                continue
+        return valid
+
+    async def list_invalid_fact_sources(
+        self, record_type: RecordType | None = None, record_id: str | None = None
+    ) -> list[InvalidAttachment]:
+        where = []
+        if record_type is not None:
+            where.append(s.fact_source.c.record_type == record_type.value)
+        if record_id is not None:
+            where.append(s.fact_source.c.record_id == record_id)
+        _, invalid = await self._read_attachments(s.fact_source, FactSource, *where)
+        return invalid
+
     async def fact_source_documents(self, record_type: RecordType, record_id: str) -> list[str]:
-        rows = await self._rows(
-            s.fact_source,
-            s.fact_source.c.record_type == record_type.value,
-            s.fact_source.c.record_id == record_id,
+        return sorted(
+            {
+                link.document_id
+                for link in await self.list_fact_sources(record_type, record_id, active_only=True)
+            }
         )
-        return [r["document_id"] for r in rows]
 
     async def delete_fact_sources(self, record_type: RecordType, record_id: str) -> None:
         await self._delete(
@@ -374,20 +541,166 @@ class UserRepository:
         return await self._insert(s.claim, Claim, values)
 
     async def update_claim(self, ref: str, values: dict[str, Any]) -> Claim:
-        return await self._update(s.claim, Claim, ref, values)
+        async with self.transaction():
+            current = await self.get_claim(ref)
+            new = _validated(Claim, {**current.model_dump(), **values})
+            if new.position_id:
+                await self.get_position(new.position_id)
+            if assertion_fingerprint(current) != assertion_fingerprint(new):
+                async with self._connect() as conn:
+                    await conn.execute(
+                        update(s.evidence)
+                        .where(self._mine(s.evidence), s.evidence.c.claim_id == current.id)
+                        .values(state="stale", updated_at=self._now())
+                    )
+                values = {**values, "provability": Provability.NONE, "status": ClaimStatus.PROPOSED}
+            else:
+                kinds = [e.kind for e in await self.list_evidence([current.id], active_only=True)]
+                values = {**values, "provability": claim_provability(kinds)}
+                if values.get("status") == ClaimStatus.CONFIRMED and not kinds:
+                    raise InputError("Confirmation requires valid active evidence.")
+                if not kinds:
+                    values["status"] = ClaimStatus.PROPOSED
+            return await self._update(s.claim, Claim, current.id, values)
 
     async def delete_claim(self, ref: str) -> str:
         return await self._delete_by_ref(s.claim, ref)  # evidence cascades
 
-    async def list_evidence(self, claim_ids: Iterable[str] | None = None) -> list[Evidence]:
-        where = [s.evidence.c.claim_id.in_(list(claim_ids))] if claim_ids is not None else []
-        return await self._list(s.evidence, Evidence, *where)
+    async def list_evidence(
+        self, claim_ids: Iterable[str] | None = None, *, active_only: bool = False
+    ) -> list[Evidence]:
+        where: list[ColumnElement[bool]] = (
+            [s.evidence.c.claim_id.in_(list(claim_ids))] if claim_ids is not None else []
+        )
+        if active_only:
+            where.append(s.evidence.c.state == "active")
+        evidence, _ = await self._read_attachments(s.evidence, Evidence, *where)
+        if not active_only:
+            return evidence
+        valid = []
+        for ev in evidence:
+            if ev.state != "active" or ev.assertion is None:
+                continue
+            try:
+                claim = await self.get_claim(ev.claim_id)
+                doc = (
+                    await self.get_document(ev.document_id) if ev.document_id is not None else None
+                )
+                check_evidence_support(ev.kind, doc, ev.excerpt, ev.reference_name)
+                check_documentary_assertion(claim, ev.kind, doc, ev.excerpt)
+                if assertion_fingerprint(claim) == assertion_fingerprint(ev.assertion):
+                    valid.append(ev)
+            except (ValueError, InputError, NotFoundError):
+                continue
+        return valid
+
+    async def list_invalid_evidence(
+        self, claim_ids: Iterable[str] | None = None
+    ) -> list[InvalidAttachment]:
+        where: list[ColumnElement[bool]] = (
+            [s.evidence.c.claim_id.in_(list(claim_ids))] if claim_ids is not None else []
+        )
+        _, invalid = await self._read_attachments(s.evidence, Evidence, *where)
+        return invalid
 
     async def get_evidence(self, ref: str) -> Evidence:
-        return await self._get(s.evidence, Evidence, ref)
+        return await self._get_attachment(s.evidence, Evidence, ref)
+
+    async def evidence_claim_id(self, ref: str) -> str:
+        """Owned linkage for deletion, without interpreting malformed evidence."""
+        rid = await self._resolve(s.evidence, ref)
+        row = (await self._rows(s.evidence, s.evidence.c.id == rid))[0]
+        return (await self.get_claim(row["claim_id"])).id
 
     async def insert_evidence(self, values: dict[str, Any]) -> Evidence:
-        return await self._insert(s.evidence, Evidence, values)
+        async with self.transaction():
+            claim = await self.get_claim(values["claim_id"])
+            doc = (
+                await self.get_document(values["document_id"])
+                if values.get("document_id") is not None
+                else None
+            )
+            kind = EvidenceKind(values["kind"])
+            try:
+                check_evidence_support(
+                    kind, doc, values.get("excerpt", ""), values.get("reference_name", "")
+                )
+                check_documentary_assertion(claim, kind, doc, values.get("excerpt", ""))
+            except ValueError as err:
+                raise InputError(str(err)) from err
+            return await self._insert(
+                s.evidence,
+                Evidence,
+                {
+                    **values,
+                    "claim_id": claim.id,
+                    "document_id": doc.id if doc else None,
+                    "assertion": claim_assertion(claim),
+                    "state": "active",
+                    "snapshot_origin": "captured",
+                },
+            )
+
+    async def insert_stale_evidence(
+        self, values: dict[str, Any], assertion: ClaimAssertion
+    ) -> Evidence:
+        """Retain an extracted assertion after a review edit; never authorize support."""
+        async with self.transaction():
+            claim = await self.get_claim(values["claim_id"])
+            doc = await self.get_document(values["document_id"])
+            kind = EvidenceKind(values["kind"])
+            try:
+                check_evidence_support(
+                    kind, doc, values.get("excerpt", ""), values.get("reference_name", "")
+                )
+                check_documentary_assertion(assertion, kind, doc, values.get("excerpt", ""))
+            except ValueError as err:
+                raise InputError(str(err)) from err
+            return await self._insert(
+                s.evidence,
+                Evidence,
+                {
+                    **values,
+                    "claim_id": claim.id,
+                    "document_id": doc.id,
+                    "assertion": assertion,
+                    "state": "stale",
+                    "snapshot_origin": "captured",
+                },
+            )
+
+    async def insert_stale_fact_source(
+        self,
+        record_type: RecordType,
+        record_id: str,
+        document_id: str,
+        assertion: FactAssertion,
+        *,
+        excerpt: str = "",
+    ) -> FactSource:
+        """Historical-only counterpart to insert_fact_source; cannot become active."""
+        async with self.transaction():
+            fact = await self._fact(record_type, record_id)
+            if not isinstance(assertion, FACT_MODELS[record_type]):
+                raise InputError("Historical assertion type must match the fixed record.")
+            doc = await self.get_document(document_id)
+            try:
+                check_fact_support(doc, excerpt)
+            except ValueError as err:
+                raise InputError(str(err)) from err
+            return await self._insert(
+                s.fact_source,
+                FactSource,
+                {
+                    "record_type": record_type,
+                    "record_id": fact.id,
+                    "document_id": doc.id,
+                    "excerpt": excerpt,
+                    "assertion": assertion.model_copy(update={"id": fact.id}),
+                    "state": "stale",
+                    "snapshot_origin": "captured",
+                },
+            )
 
     async def delete_evidence(self, ref: str) -> str:
         return await self._delete_by_ref(s.evidence, ref)
@@ -454,6 +767,12 @@ class UserRepository:
                 "seq": seq,
                 "target_id": target_id,
                 "payload": payload,
+                "review_context": await self._target_context(
+                    payload,
+                    ReviewContext(origin="captured", original_payload=payload),
+                    batch_id,
+                    capture_original=True,
+                ),
             },
         )
         now = self._now()
@@ -469,6 +788,87 @@ class UserRepository:
                 )
             )
         return item
+
+    async def _target_context(
+        self,
+        payload: Payload,
+        context: ReviewContext,
+        batch_id: str,
+        projected: ClaimAssertion | FactAssertion | None = None,
+        *,
+        capture_original: bool = False,
+    ) -> ReviewContext:
+        target = None
+        reference = review_target(payload)
+        if reference is None:
+            return context.model_copy(update={"conflict": None})
+        record_type, ref = reference
+        if ref.startswith("$item:"):
+            seq = int(ref.removeprefix("$item:"))
+            parent = next((i for i in await self.list_items(batch_id) if i.seq == seq), None)
+            target = created_assertion(parent.payload, ref) if parent else None
+            target_id = ref
+        elif record_type == "claim":
+            claim = await self.get_claim(ref)
+            target = claim_assertion(claim)
+            target_id = claim.id
+        else:
+            target = await self._fact(record_type, ref)
+            target_id = target.id
+        if projected is not None:
+            target = projected
+        if target is None:
+            return context.model_copy(update={"conflict": None})
+        if capture_original:
+            context = context.model_copy(
+                update={
+                    "original_target_id": target_id,
+                    "original_target_assertion": target.model_dump(mode="json"),
+                }
+            )
+        return context.model_copy(
+            update={
+                "target_id": target_id,
+                "target_assertion": target.model_dump(mode="json"),
+                "target_fingerprint": assertion_fingerprint(target),
+                "conflict": None,
+            }
+        )
+
+    async def refresh_item_target(
+        self,
+        item_id: str,
+        payload: Payload,
+        *,
+        projected: ClaimAssertion | FactAssertion | None = None,
+    ) -> None:
+        """Explicit renewed review; never replaces the original extraction."""
+        item = await self._get(s.proposal_item, ProposalItem, item_id)
+        context = await self._target_context(
+            payload, item.review_context or ReviewContext(), item.batch_id, projected
+        )
+        async with self._connect() as conn:
+            await conn.execute(
+                update(s.proposal_item)
+                .where(self._mine(s.proposal_item), s.proposal_item.c.id == item.id)
+                .values(
+                    review_context=dumps(context.model_dump(mode="json")), updated_at=self._now()
+                )
+            )
+
+    async def mark_item_conflict(self, item_id: str, conflict: ReviewConflict) -> None:
+        item = await self._get(s.proposal_item, ProposalItem, item_id)
+        context = (item.review_context or ReviewContext()).model_copy(update={"conflict": conflict})
+        async with self._connect() as conn:
+            await conn.execute(
+                update(s.proposal_item)
+                .where(self._mine(s.proposal_item), s.proposal_item.c.id == item.id)
+                .values(
+                    review_context=dumps(context.model_dump(mode="json")),
+                    decision=Decision.PENDING.value,
+                    updated_at=self._now(),
+                )
+            )
 
     async def list_items(self, batch_id: str) -> list[ProposalItem]:
         rows = await self._rows(s.proposal_item, s.proposal_item.c.batch_id == batch_id)
@@ -500,7 +900,13 @@ class UserRepository:
         async with self._connect() as conn:
             for table in s.metadata.sorted_tables:
                 q = select(table).where(self._mine(table)).order_by(*table.primary_key.columns)
-                out[table.name] = [dict(r._mapping) for r in await conn.execute(q)]
+                out[table.name] = [
+                    {
+                        k: export_assertion(v) if k in {"assertion", "review_context"} else v
+                        for k, v in r._mapping.items()
+                    }
+                    for r in await conn.execute(q)
+                ]
         return out
 
     async def delete_user(self) -> None:

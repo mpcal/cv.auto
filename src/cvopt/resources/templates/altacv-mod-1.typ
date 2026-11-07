@@ -94,14 +94,41 @@
   for line in m.report_summary [#line \ ]
   v(0.6em)
   set text(size: 0.8em)
-  let fmt(x) = if x == none { "" } else { x }
+  if m.report_requirements.len() > 0 {
+    heading(level: 2, L.requirement_coverage)
+    for r in m.report_requirements {
+      block(above: 0.7em, below: 0.3em)[#strong(r.heading) \ #r.coverage]
+      if r.support.len() > 0 [#strong(L.supporting_content): #r.support.join("; ") \ ]
+      if r.target.len() > 0 [#strong(L.target_statements): #r.target.join("; ") \ ]
+      if r.context.len() > 0 [#strong(L.unconfirmed_context): #r.context.join("; ") \ ]
+      for action in r.actions [#action \ ]
+    }
+    v(0.7em)
+  }
+  heading(level: 2, L.content_rows)
+  let fmt(prefix, x) = if x == none { "" } else { L.at(prefix + "_" + str(x), default: str(x)) }
   table(
-    columns: (auto, 1fr, auto, auto, auto, auto),
+    columns: (auto, 1fr, auto, auto, auto, auto, 0.7fr),
     stroke: 0.4pt + gray,
     inset: 4pt,
     table.header(..(L.col_row, L.col_claim, L.col_fidelity, L.col_provability, L.col_impact,
-      L.col_requirement).map(h => strong(h))),
-    ..m.report.map(r => (str(r.row), r.claim, fmt(r.fidelity), fmt(r.provability),
-      str(calc.round(r.impact, digits: 1)), r.requirements.join(", "))).flatten()
+      L.col_requirement, L.sources_reasons).map(h => strong(h))),
+    ..m.report.map(r => (str(r.row), [#strong(fmt("row", r.kind)) \ #r.claim], fmt("fidelity", r.fidelity), fmt("provability", r.provability),
+      str(calc.round(r.impact, digits: 1)), r.requirements.join(", "), m.report_row_sources.at(str(r.row), default: ""))).flatten()
   )
+  if m.report_assertions.len() > 0 {
+    pagebreak(weak: true)
+    heading(level: 2, L.original_assertions)
+    for a in m.report_assertions {
+      heading(level: 3, a.ref)
+      block(above: 0.2em, below: 0.3em)[#a.text]
+    }
+  }
+  if m.report_sources.len() > 0 {
+    heading(level: 2, L.evidence_excerpts)
+    for source in m.report_sources {
+      heading(level: 3, source.ref)
+      block(above: 0.2em, below: 0.3em)[#source.text]
+    }
+  }
 }

@@ -15,6 +15,7 @@ from cvopt.cli.common import (
     run_async,
     short,
     split_list,
+    stderr_console,
 )
 from cvopt.cli.review import review_batch
 from cvopt.context import UserContext
@@ -238,7 +239,7 @@ def education_refresh(
     """Recover missing education details from an already imported document."""
 
     async def op(c: Container, u: UserContext) -> None:
-        with console.status("Reading education details…"):
+        with stderr_console.status("Reading education details…"):
             result = await c.ingestion.refresh_education(u, document)
         if result.batch_id:
             await review_batch(c, u, result.batch_id, accept_all)
@@ -418,6 +419,7 @@ def claim_list(
                 {
                     **r.claim.model_dump(mode="json"),
                     "evidence": [e.model_dump(mode="json") for e in r.evidence],
+                    "invalid_evidence": [e.model_dump(mode="json") for e in r.invalid_evidence],
                 }
                 for r in rows
             ]
@@ -473,6 +475,12 @@ def claim_edit(
     console.print(f"Updated claim {short(cl.id)}")
 
 
+@claim_app.command("confirm")
+def claim_confirm(ctx: typer.Context, id: str) -> None:
+    claim = run_async(ctx, lambda c, u: c.data.confirm_claim(u, id), writes=True)
+    console.print(f"Confirmed claim {short(claim.id)}")
+
+
 @claim_app.command("rm")
 def claim_rm(ctx: typer.Context, id: str) -> None:
     rid = run_async(ctx, lambda c, u: c.data.delete_claim(u, id), writes=True)
@@ -506,6 +514,27 @@ def evidence_add(
         writes=True,
     )
     console.print(f"Claim {short(r.claim.id)} provability: {r.claim.provability}")
+
+
+@evidence_app.command("reconfirm")
+def evidence_reconfirm(
+    ctx: typer.Context,
+    id: str,
+    excerpt: Annotated[str | None, Opt()] = None,
+    fact_source: Annotated[
+        bool, Opt("--fact-source", help="Reconfirm a fixed-record source.")
+    ] = False,
+) -> None:
+    if fact_source:
+        source = run_async(
+            ctx, lambda c, u: c.data.reconfirm_fact_source(u, id, excerpt=excerpt), writes=True
+        )
+        console.print(f"Reconfirmed fact source {source.id}")
+        return
+    r = run_async(ctx, lambda c, u: c.data.reconfirm_evidence(u, id, excerpt=excerpt), writes=True)
+    console.print(
+        f"Reconfirmed evidence; claim {short(r.claim.id)} provability: {r.claim.provability}"
+    )
 
 
 @evidence_app.command("rm")

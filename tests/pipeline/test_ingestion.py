@@ -66,6 +66,9 @@ async def test_edit_must_keep_action_and_refer_backwards(
         await golden.ingestion.decide_item(
             alice, res.batch_id, claim.seq, Decision.ACCEPT, {**data, "type": "hobby"}
         )
+    # A dependent can only be accepted once its parent is accepted.
+    parent_seq = int(data["position_id"].removeprefix("$item:"))
+    await golden.ingestion.decide_item(alice, res.batch_id, parent_seq, Decision.ACCEPT)
     res2 = await golden.ingestion.decide_item(
         alice, res.batch_id, claim.seq, Decision.ACCEPT, {**data, "text": "Edited text"}
     )

@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 from cvopt.domain.base import Model
-from cvopt.domain.candidates import Annotation, Candidate
+from cvopt.domain.candidates import Annotation, Candidate, RecordSource
 from cvopt.domain.enums import Fidelity, Provability
 from cvopt.domain.records import Claim
 from cvopt.domain.rules import Vocabulary, passes_hard_facts, statement_provability
@@ -16,7 +16,8 @@ class PlacedStatement(Model):
     sentence: int | None
     text: str
     candidate: Candidate
-    sources: list[Claim]  # in the JD's language
+    sources: list[Claim]  # immutable original assertions
+    source_records: list[RecordSource] = []
     inferable: bool
     gain: float
     alternative_gain: float | None  # exaggerated: best non-exaggerated, same sources
@@ -63,9 +64,18 @@ def validate_statements(
             bad("annotation", f"{p.pointer} needs exactly one matching annotation")
         elif (a.fidelity, a.provability) != (c.fidelity, c.provability):
             bad("annotation", f"{p.pointer}: annotation disagrees with the statement")
-        if c.fidelity is not Fidelity.INVENTED and not p.sources:
+        sources: list[Claim | RecordSource] = [*p.sources, *p.source_records]
+        if a is not None and (
+            a.source_claim_ids != c.source_claim_ids or a.source_record_refs != c.source_record_refs
+        ):
+            bad("annotation", "annotation source provenance disagrees with the statement")
+        if [s.ref for s in p.source_records] != c.source_record_refs:
+            bad("sources", "fixed-record provenance disagrees with the statement")
+        if c.fidelity is not Fidelity.INVENTED and not sources:
             bad("sources", "a sourced statement needs source claims")
-        if not passes_hard_facts(p.text, c.fidelity, p.sources, vocab):
+        if not passes_hard_facts(
+            p.text, c.fidelity, sources, vocab, numeric_name_spans=c.numeric_name_spans
+        ):
             bad(
                 "hard_facts",
                 "a number, date or name is missing from the sources"
@@ -80,7 +90,7 @@ def validate_statements(
             bad("assertion", f"invented assertion {c.assertion_key} appears twice")
         expected = statement_provability(
             c.fidelity,
-            [s.provability for s in p.sources] or [Provability.NONE],
+            [s.provability for s in sources] or [Provability.NONE],
             inferable=p.inferable,
         )
         if c.provability is not expected:

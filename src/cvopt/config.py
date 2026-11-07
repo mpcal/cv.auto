@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cvopt.errors import InputError
 
@@ -24,6 +24,15 @@ class AppSettings(Section):
     debug_text_logging: bool = False
 
 
+class TokenPrices(Section):
+    """Optional per-model USD per million tokens; no implicit provider prices."""
+
+    input: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    output: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cache_read: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cache_write: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
 class LLMSettings(Section):
     provider: str = "anthropic"
     strong_model: str = "claude-sonnet-5-5"
@@ -32,6 +41,7 @@ class LLMSettings(Section):
     request_timeout_s: float = 120
     max_retries: int = 5
     schema_retries: int = 2
+    prices: dict[str, TokenPrices] = {}
 
     def model_for(self, tier: str) -> str:
         return self.strong_model if tier == "strong" else self.fast_model

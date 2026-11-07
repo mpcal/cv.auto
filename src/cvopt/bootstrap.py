@@ -15,9 +15,12 @@ from cvopt.adapters.language import LinguaDetector
 from cvopt.adapters.typst_renderer import TypstRenderer
 from cvopt.config import Settings
 from cvopt.llm.runner import TaskRunnerFactory
+from cvopt.observability import Observer
 from cvopt.ports import Clock, LLMClient, WebFetcher
 from cvopt.services.account import AccountService
+from cvopt.services.comparison import ComparisonService
 from cvopt.services.data import DataService
+from cvopt.services.discovery import RunDiscoveryService
 from cvopt.services.generation import GenerationService
 from cvopt.services.ingestion import IngestionService
 from cvopt.services.jd import JdService
@@ -39,6 +42,8 @@ class Container:
     render: RenderService
     generation: GenerationService
     account: AccountService
+    runs: RunDiscoveryService
+    comparison: ComparisonService
 
 
 async def build_container(
@@ -46,17 +51,21 @@ async def build_container(
     clock: Clock | None = None,
     llm: LLMClient | None = None,
     fetcher: WebFetcher | None = None,
+    observer: Observer | None = None,
 ) -> Container:
     engine = await open_database(settings.app.database_url)  # pragmas, then migrations
     clock = clock or SystemClock()
     repos = RepositoryFactory(engine, clock)
     files = LocalFileStore(settings.app.data_root)
     extractor = LocalTextExtractor(settings.documents)
-    runners = TaskRunnerFactory(llm or AnthropicLLMClient(settings.llm), repos, settings)
+    runners = TaskRunnerFactory(llm or AnthropicLLMClient(settings.llm), repos, settings, observer)
     scoring = ScoringService(runners, clock, settings)
     render = RenderService(TypstRenderer(), settings)
+    discovery = RunDiscoveryService(files)
     return Container(
         settings=settings,
+        runs=discovery,
+        comparison=ComparisonService(discovery, repos, runners, clock, settings),
         engine=engine,
         files=files,
         repos=repos,

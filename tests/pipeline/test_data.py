@@ -61,13 +61,18 @@ async def test_deleting_document_recomputes_claims(
             "sha256": "cd" * 32,
             "mime_type": "application/pdf",
             "received_at": TEST_NOW,
+            "extracted_text": "Cut costs 20%",
         }
     )
     r = await d.create_claim(
         alice, type=ClaimType.ACHIEVEMENT, text="Cut costs 20%", text_lang="en"
     )
     r = await d.add_evidence(
-        alice, r.claim.id, kind=EvidenceKind.REFERENCE_LETTER, document=doc.id, excerpt="..."
+        alice,
+        r.claim.id,
+        kind=EvidenceKind.REFERENCE_LETTER,
+        document=doc.id,
+        excerpt="Cut costs 20%",
     )
     assert r.claim.provability is Provability.HIGH
     [affected] = await d.delete_document(alice, doc.id)

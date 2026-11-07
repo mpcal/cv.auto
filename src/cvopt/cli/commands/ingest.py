@@ -8,7 +8,7 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 from cvopt.bootstrap import Container
-from cvopt.cli.common import console, print_json, run_async, short
+from cvopt.cli.common import console, print_json, run_async, short, stderr_console
 from cvopt.cli.review import review_batch
 from cvopt.context import UserContext
 from cvopt.domain.enums import BatchStatus, Decision, DocumentKind
@@ -23,7 +23,7 @@ def ingest(
     """Ingest a document and review what it proposes."""
 
     async def op(c: Container, u: UserContext) -> None:
-        with console.status(f"Reading {file.name}…"):
+        with stderr_console.status(f"Reading {file.name}…"):
             res = await c.ingestion.ingest_document(u, file, kind)
         if res.duplicate_of:
             console.print(

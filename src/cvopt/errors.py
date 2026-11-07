@@ -27,6 +27,10 @@ class LLMTaskError(CvoptError):
     exit_code = 2
 
 
+class LLMOutputError(LLMTaskError):
+    """The provider answered, but output validation exhausted the task retries."""
+
+
 class ValidationFailed(CvoptError):
     """Generation cannot satisfy the rules or the page budget."""
 

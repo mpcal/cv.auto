@@ -5,6 +5,7 @@ import re
 from collections.abc import Iterable, Sequence
 from typing import cast
 
+from cvopt.domain.candidates import RecordSource
 from cvopt.domain.enums import (
     DEGREE_RANK,
     FIDELITY_RANK,
@@ -17,6 +18,7 @@ from cvopt.domain.enums import (
     MatchLevel,
     Provability,
 )
+from cvopt.domain.facts import quantities, sourced_quantities_match, without_numeric_names
 from cvopt.domain.records import Claim, Position
 from cvopt.domain.tables import load_table
 from cvopt.domain.text import contains_term, normalize
@@ -181,13 +183,19 @@ class Vocabulary:
 
 
 def passes_hard_facts(
-    text: str, fidelity: Fidelity, sources: Sequence[Claim], vocab: Vocabulary
+    text: str,
+    fidelity: Fidelity,
+    sources: Sequence[Claim | RecordSource],
+    vocab: Vocabulary,
+    *,
+    numeric_name_spans: list[str] | None = None,
 ) -> bool:
-    """Sourced: every number and named term occurs in the sources. Invented: no digits."""
+    """Every explicit quantity and known named term must occur in source assertions."""
     if fidelity is Fidelity.INVENTED:
-        return not re.search(r"\d", text)
-    src_text = " ".join([s.text for s in sources] + [k for s in sources for k in s.keywords])
-    if not numbers(text) <= numbers(src_text):
+        masked = without_numeric_names(text, numeric_name_spans or [])
+        return not re.search(r"\d", text) and masked is not None and not quantities(masked)
+    src_text = " ".join(s.text for s in sources)
+    if not sourced_quantities_match(src_text, text):
         return False
     return all(vocab.term_or_equivalent_in(t, src_text) for t in vocab.terms_in(text))
 

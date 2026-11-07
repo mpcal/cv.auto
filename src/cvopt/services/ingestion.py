@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -15,6 +14,9 @@ from rapidfuzz import fuzz
 
 from cvopt.config import Settings
 from cvopt.context import UserContext
+from cvopt.domain.assertions import (
+    assertion_fingerprint,
+)
 from cvopt.domain.enums import (
     BatchStatus,
     ClaimStatus,
@@ -25,7 +27,16 @@ from cvopt.domain.enums import (
     Origin,
     RecordType,
 )
-from cvopt.domain.records import Claim, Position, Profile
+from cvopt.domain.records import (
+    FACT_MODELS,
+    Award,
+    Certificate,
+    Claim,
+    ClaimAssertion,
+    FactAssertion,
+    Position,
+    Profile,
+)
 from cvopt.domain.review import (
     AddEvidence,
     Conflict,
@@ -41,13 +52,16 @@ from cvopt.domain.review import (
     Payload,
     ProposalItem,
     ReviewBatch,
+    ReviewConflict,
     SetProfileField,
+    UpdateAward,
+    UpdateCertificate,
     UpdateEducation,
     UpdatePosition,
 )
 from cvopt.domain.rules import claim_provability, order_positions
 from cvopt.domain.text import normalize
-from cvopt.errors import ConflictError, InputError
+from cvopt.errors import ConflictError, InputError, NotFoundError
 from cvopt.llm.runner import TaskRunner, TaskRunnerFactory
 from cvopt.llm.tasks.common import ExAward, ExCertificate, ExEducation, ExLanguage, ExPosition
 from cvopt.llm.tasks.extract_certificate import EXTRACT_CERTIFICATE, CertificateInput
@@ -71,8 +85,22 @@ from cvopt.ports import (
     TextExtractor,
 )
 from cvopt.services.data import recompute_provability
+from cvopt.services.review_safety import (
+    ITEM_REF,
+    UPDATES,
+    _check_item,
+    _fact,
+    _match_named_fact,
+    _materially_edited,
+    _named_fill,
+    _preflight,
+    _Projection,
+    _update_target,
+    _updated_fact,
+    item_ref,
+    references,
+)
 
-ITEM_REF = re.compile(r"^\$item:(\d+)$")
 PAYLOAD = TypeAdapter[Payload](Payload)
 PROFILE_FIELDS = ("name", "email", "phone", "city", "country", "website", "linkedin", "github")
 
@@ -95,16 +123,6 @@ class DecideResult:
 class ApplyResult:
     applied: int
     rejected: int
-
-
-def item_ref(seq: int) -> str:
-    return f"$item:{seq}"
-
-
-def references(payload: Payload) -> set[int]:
-    """Seqs of the batch items a payload refers to as `$item:<seq>`."""
-    found = re.findall(r'"\$item:(\d+)"', json.dumps(payload.model_dump(mode="json")))
-    return {int(n) for n in found}
 
 
 def employer_matches(a: str, b: str, threshold: int) -> bool:
@@ -187,6 +205,7 @@ class _Builder:
             return item_ref(
                 self.out.add(
                     CreatePosition(
+                        excerpt=p.excerpt,
                         employer=p.employer,
                         employer_location=p.employer_location,
                         title=p.title,
@@ -195,10 +214,15 @@ class _Builder:
                     )
                 )
             )
-        self.out.add(LinkFactSource(record_type=RecordType.POSITION, record_id=match.id), match.id)
+        self.out.add(
+            LinkFactSource(record_type=RecordType.POSITION, record_id=match.id, excerpt=p.excerpt),
+            match.id,
+        )
         if p.employer_location and not match.employer_location:
             self.out.add(
-                UpdatePosition(position_id=match.id, employer_location=p.employer_location),
+                UpdatePosition(
+                    position_id=match.id, employer_location=p.employer_location, excerpt=p.excerpt
+                ),
                 match.id,
             )
         for name, stored, new in [
@@ -245,6 +269,7 @@ class _Builder:
                     self.out.add(
                         UpdateEducation(
                             education_id=s.id,
+                            excerpt=e.excerpt,
                             grade=grade,
                             summary=summary,
                             highlights=highlights,
@@ -252,13 +277,17 @@ class _Builder:
                         ),
                         s.id,
                     )
-                if link_source:
+                elif link_source:
                     self.out.add(
-                        LinkFactSource(record_type=RecordType.EDUCATION, record_id=s.id), s.id
+                        LinkFactSource(
+                            record_type=RecordType.EDUCATION, record_id=s.id, excerpt=e.excerpt
+                        ),
+                        s.id,
                     )
                 return
         self.out.add(
             CreateEducation(
+                excerpt=e.excerpt,
                 institution=e.institution,
                 area=e.area,
                 degree_type=e.degree_type,
@@ -288,37 +317,83 @@ class _Builder:
                     )
                 else:
                     self.out.add(
-                        LinkFactSource(record_type=RecordType.LANGUAGE, record_id=s.id), s.id
+                        LinkFactSource(
+                            record_type=RecordType.LANGUAGE, record_id=s.id, excerpt=lang.excerpt
+                        ),
+                        s.id,
                     )
                 return
-        self.out.add(CreateLanguage(language_code=lang.language_code, level=lang.level))
+        self.out.add(
+            CreateLanguage(language_code=lang.language_code, level=lang.level, excerpt=lang.excerpt)
+        )
 
     async def certificate(self, c: ExCertificate) -> None:
-        for s in await self._repo.list_certificates():
-            if normalize(s.name) == normalize(c.name):
-                self.out.add(
-                    LinkFactSource(record_type=RecordType.CERTIFICATE, record_id=s.id), s.id
-                )
-                return
-        self.out.add(
-            CreateCertificate(
-                name=c.name, issuer=c.issuer, issued_month=c.issued_month or None, url=c.url
-            )
+        await self._named_fact(
+            CreateCertificate(**{**c.model_dump(), "issued_month": c.issued_month or None})
         )
 
     async def award(self, a: ExAward) -> None:
-        for s in await self._repo.list_awards():
-            if normalize(s.title) == normalize(a.title):
-                self.out.add(LinkFactSource(record_type=RecordType.AWARD, record_id=s.id), s.id)
-                return
-        self.out.add(
-            CreateAward(
-                title=a.title,
-                awarder=a.awarder,
-                awarded_month=a.awarded_month or None,
-                summary=a.summary,
-            )
+        await self._named_fact(
+            CreateAward(**{**a.model_dump(), "awarded_month": a.awarded_month or None})
         )
+
+    async def _named_fact(self, p: CreateCertificate | CreateAward) -> None:
+        record_type = (
+            RecordType.CERTIFICATE if isinstance(p, CreateCertificate) else RecordType.AWARD
+        )
+        records: list[Certificate | Award] = []
+        records.extend(
+            await self._repo.list_certificates()
+            if isinstance(p, CreateCertificate)
+            else await self._repo.list_awards()
+        )
+        # Match against earlier creations and their planned fill-only enrichments.
+        projected = {record.id: record for record in records}
+        for seq, (earlier, _) in enumerate(self.out.items, 1):
+            if type(earlier) is type(p):
+                model = Certificate if isinstance(p, CreateCertificate) else Award
+                projected[item_ref(seq)] = model.model_validate(
+                    {**earlier.model_dump(exclude={"action", "excerpt"}), "id": item_ref(seq)}
+                )
+            elif isinstance(
+                earlier, UpdateCertificate if isinstance(p, CreateCertificate) else UpdateAward
+            ):
+                _, ref = _update_target(earlier)
+                enriched = _updated_fact(earlier, projected[ref])
+                assert isinstance(enriched, Certificate | Award)
+                projected[ref] = enriched
+        records = list(projected.values())
+        match, uncertain = _match_named_fact(p, records)
+        if uncertain:
+            self.out.add(
+                Conflict(
+                    record_type=record_type.value,
+                    record_id="",
+                    field="identity",
+                    stored_value=json.dumps(
+                        [r.model_dump(mode="json") for r in records], ensure_ascii=False
+                    ),
+                    document_value=json.dumps(
+                        p.model_dump(mode="json", exclude={"action", "excerpt"}), ensure_ascii=False
+                    ),
+                )
+            )
+        elif match:
+            fill = _named_fill(p, match)
+            if fill:
+                update = (
+                    UpdateCertificate(certificate_id=match.id, excerpt=p.excerpt, **fill)
+                    if isinstance(p, CreateCertificate)
+                    else UpdateAward(award_id=match.id, excerpt=p.excerpt, **fill)
+                )
+                self.out.add(update, match.id)
+            else:
+                self.out.add(
+                    LinkFactSource(record_type=record_type, record_id=match.id, excerpt=p.excerpt),
+                    match.id,
+                )
+        else:
+            self.out.add(p)
 
     # --- claims ---------------------------------------------------------------------
 
@@ -409,7 +484,6 @@ class _Builder:
             await self.certificate(c)
         for a in out.awards:
             await self.award(a)
-        evidence = EvidenceDraft(kind=EvidenceKind.OWN_CV)
         await self.claims_for(
             [
                 (
@@ -417,7 +491,7 @@ class _Builder:
                     c.text,
                     c.keywords,
                     position_ids[c.position] if c.position >= 0 else None,
-                    evidence,
+                    EvidenceDraft(kind=EvidenceKind.OWN_CV, excerpt=c.excerpt),
                 )
                 for c in out.claims
             ]
@@ -448,10 +522,17 @@ class _Builder:
             position_id = refs[out.position_ref].id
             self.position_id = position_id
             self.out.add(
-                LinkFactSource(record_type=RecordType.POSITION, record_id=position_id), position_id
+                LinkFactSource(
+                    record_type=RecordType.POSITION,
+                    record_id=position_id,
+                    excerpt=out.position_excerpt,
+                ),
+                position_id,
             )
         else:
-            position_id = self.position(out.new_position)
+            position_id = self.position(
+                out.new_position.model_copy(update={"excerpt": out.position_excerpt})
+            )
         new = []
         for p in out.passages:
             if p.grade in EVIDENCE_GRADES:
@@ -476,9 +557,17 @@ class _Builder:
         else:
             await self.certificate(out.certificate)
             self.issuer = out.certificate.issuer
-        evidence = EvidenceDraft(kind=EvidenceKind.CERTIFICATE_OR_DIPLOMA)
         await self.claims_for(
-            [(ClaimType.SKILL, c.text, c.keywords, None, evidence) for c in out.claims]
+            [
+                (
+                    ClaimType.SKILL,
+                    c.text,
+                    c.keywords,
+                    None,
+                    EvidenceDraft(kind=EvidenceKind.CERTIFICATE_OR_DIPLOMA, excerpt=c.excerpt),
+                )
+                for c in out.claims
+            ]
         )
 
 
@@ -634,6 +723,7 @@ class IngestionService:
         """Saves one decision. An edited payload is validated and accepted; rejecting an
         item also rejects the items that depend on it."""
         repo = self._repos.for_user(user)
+        conflict: ReviewConflict | None = None
         async with repo.transaction():
             batch = await self._open_batch(repo, batch_ref)
             items = await repo.list_items(batch.id)
@@ -645,7 +735,63 @@ class IngestionService:
             if payload is not None:
                 edited = _validate_edit(item, payload, by_seq)
                 decision = Decision.ACCEPT
-            await repo.update_item(item.id, decision, edited)
+            if decision is Decision.ACCEPT:
+                projection = await _Projection.load(repo)
+                for prior in items:
+                    if prior.seq < seq and prior.decision is Decision.ACCEPT:
+                        await projection.advance(prior)
+                candidate = item.model_copy(
+                    update={"payload": edited or item.payload, "decision": decision}
+                )
+                conflict = await _check_item(
+                    repo,
+                    candidate,
+                    by_seq,
+                    await repo.get_document(batch.document_id),
+                    projection,
+                    renewed=True,
+                )
+                projected = await projection.target(candidate.payload) if conflict is None else None
+                projected_id = (
+                    await projection.target_id(candidate.payload) if projected is not None else None
+                )
+                ctx = item.review_context
+                if (
+                    projected is not None
+                    and edited is None
+                    and (
+                        not ctx
+                        or ctx.target_id != projected_id
+                        or ctx.target_fingerprint != assertion_fingerprint(projected)
+                    )
+                    and (
+                        not ctx
+                        or not ctx.conflict
+                        or ctx.conflict.current_target_id != projected_id
+                        or ctx.conflict.current_assertion != projected.model_dump(mode="json")
+                    )
+                ):
+                    conflict = ReviewConflict(
+                        reason=(
+                            "Target assertion changed or its prior identity is unknown; "
+                            "review it again."
+                        ),
+                        prior_assertion=ctx.target_assertion if ctx else None,
+                        prior_target_id=ctx.target_id if ctx else None,
+                        current_target_id=projected_id,
+                        current_assertion=projected.model_dump(mode="json"),
+                        source_excerpt=(
+                            candidate.payload.evidence.excerpt
+                            if isinstance(candidate.payload, AddEvidence)
+                            else getattr(candidate.payload, "excerpt", "")
+                        ),
+                    )
+                if conflict:
+                    await repo.mark_item_conflict(item.id, conflict)
+                else:
+                    await repo.refresh_item_target(item.id, candidate.payload, projected=projected)
+            if conflict is None:
+                await repo.update_item(item.id, decision, edited)
             rejected: list[ProposalItem] = []
             if decision is Decision.REJECT:
                 for dep in _dependents(items, seq):
@@ -655,15 +801,34 @@ class IngestionService:
                         )
                         rejected.append(dep)
             updated = {i.seq: i for i in await repo.list_items(batch.id)}
+        if conflict:
+            raise ConflictError(f"Item {seq}: {conflict.reason}")
         return DecideResult(updated[seq], [updated[d.seq] for d in rejected])
 
     async def accept_all(self, user: UserContext, batch_ref: str) -> int:
         repo = self._repos.for_user(user)
+        conflicts: list[int] = []
         async with repo.transaction():
             batch = await self._open_batch(repo, batch_ref)
-            pending = [i for i in await repo.list_items(batch.id) if i.decision is Decision.PENDING]
-            for i in pending:
-                await repo.update_item(i.id, Decision.ACCEPT)
+            items = await repo.list_items(batch.id)
+            pending = [i for i in items if i.decision is Decision.PENDING]
+            candidates = [
+                i.model_copy(update={"decision": Decision.ACCEPT})
+                if i.decision is Decision.PENDING
+                else i
+                for i in items
+            ]
+            conflicts = await _preflight(
+                repo, candidates, await repo.get_document(batch.document_id)
+            )
+            if not conflicts:
+                for i in pending:
+                    await repo.update_item(i.id, Decision.ACCEPT)
+        # Deliberately outside the transaction: review conflicts must survive the error.
+        if conflicts:
+            raise ConflictError(
+                f"Renew review of conflicting item(s): {', '.join(map(str, conflicts))}."
+            )
         return len(pending)
 
     async def discard_batch(self, user: UserContext, batch_ref: str) -> ReviewBatch:
@@ -674,30 +839,52 @@ class IngestionService:
 
     async def apply_batch(self, user: UserContext, batch_ref: str) -> ApplyResult:
         repo = self._repos.for_user(user)
+        conflicts: list[int] = []
+        applied = 0
         async with repo.transaction():
             batch = await self._open_batch(repo, batch_ref)
             items = await repo.list_items(batch.id)
-            if pending := [i.seq for i in items if i.decision is Decision.PENDING]:
-                raise ConflictError(
-                    f"{len(pending)} item(s) still pending: {', '.join(map(str, pending))}."
+            conflicts = await _preflight(repo, items, await repo.get_document(batch.document_id))
+            if not conflicts:
+                if pending := [i.seq for i in items if i.decision is Decision.PENDING]:
+                    raise ConflictError(
+                        f"{len(pending)} item(s) still pending: {', '.join(map(str, pending))}."
+                    )
+                created: dict[int, str] = {}
+                claim_ids: set[str] = set()
+                for item in items:
+                    if item.decision is not Decision.ACCEPT:
+                        continue
+                    payload = _resolve(item.payload, created)
+                    original = item.review_context.original_payload if item.review_context else None
+                    if original:
+                        original = _resolve(original, created, historical=True)
+                    original_target = None
+                    if (
+                        isinstance(original, UPDATES)
+                        and item.review_context
+                        and item.review_context.original_target_assertion
+                    ):
+                        rec_type, _ = _update_target(original)
+                        values = dict(item.review_context.original_target_assertion)
+                        if isinstance(values.get("id"), str) and (
+                            m := ITEM_REF.fullmatch(values["id"])
+                        ):
+                            values["id"] = created.get(int(m.group(1)), values["id"])
+                        original_target = FACT_MODELS[rec_type].model_validate(values)
+                    new_id = await _apply(
+                        repo, payload, batch.document_id, claim_ids, original, original_target
+                    )
+                    if new_id:
+                        created[item.seq] = new_id
+                    applied += 1
+                await recompute_provability(repo, sorted(claim_ids))
+                await repo.update_batch(
+                    batch.id, {"status": BatchStatus.APPLIED, "applied_at": self._clock.now()}
                 )
-            created: dict[int, str] = {}
-            claim_ids: set[str] = set()
-            applied = 0
-            for item in items:
-                if item.decision is not Decision.ACCEPT:
-                    continue
-                payload = PAYLOAD.validate_python(item.payload.model_dump())  # re-validate
-                if not references(payload) <= created.keys():
-                    continue  # depends on an item that was rejected or not applied
-                payload = _resolve(payload, created)
-                new_id = await _apply(repo, payload, batch.document_id, claim_ids)
-                if new_id:
-                    created[item.seq] = new_id
-                applied += 1
-            await recompute_provability(repo, sorted(claim_ids))
-            await repo.update_batch(
-                batch.id, {"status": BatchStatus.APPLIED, "applied_at": self._clock.now()}
+        if conflicts:
+            raise ConflictError(
+                f"Renew review of conflicting item(s): {', '.join(map(str, conflicts))}."
             )
         return ApplyResult(applied=applied, rejected=len(items) - applied)
 
@@ -729,70 +916,76 @@ def _validate_edit(
     return edited
 
 
-def _resolve(payload: Payload, created: dict[int, str]) -> Payload:
+def _resolve(payload: Payload, created: dict[int, str], *, historical: bool = False) -> Payload:
     """Replaces `$item:<seq>` references with the ids those items created."""
     data = payload.model_dump(mode="json")
     for key, value in data.items():
-        if isinstance(value, str) and (m := ITEM_REF.match(value)):
-            data[key] = created[int(m.group(1))]
+        if key.endswith("_id") and isinstance(value, str) and (m := ITEM_REF.fullmatch(value)):
+            seq = int(m.group(1))
+            if seq in created:
+                data[key] = created[seq]
+            elif not historical:
+                raise ConflictError(f"Unresolved dependency on item {seq}.")
     return PAYLOAD.validate_python(data)
 
 
-async def _apply(repo: Repository, p: Payload, document_id: str, claim_ids: set[str]) -> str | None:
+async def _apply(
+    repo: Repository,
+    p: Payload,
+    document_id: str,
+    claim_ids: set[str],
+    original: Payload | None,
+    original_target: FactAssertion | None = None,
+) -> str | None:
     """Applies one accepted payload; returns the id of a record it created."""
     if isinstance(p, SetProfileField):
         profile = await repo.get_profile()
         await repo.save_profile(profile.model_copy(update={p.field: p.value}))
     elif isinstance(p, CreatePosition):
-        pos = await repo.insert_position(p.model_dump(exclude={"action"}))
-        await repo.insert_fact_source(RecordType.POSITION, pos.id, document_id)
+        pos = await repo.insert_position(p.model_dump(exclude={"action", "excerpt"}))
+        await _attach_fact(repo, RecordType.POSITION, pos.id, document_id, p, original)
         return pos.id
-    elif isinstance(p, UpdatePosition):
-        pos = await repo.get_position(p.position_id)
-        stored = pos.model_dump()
-        fill = {
-            k: v
-            for k, v in p.model_dump(exclude={"action", "position_id"}).items()
-            if v is not None and not stored[k]
-        }
-        if fill:
-            await repo.update_position(pos.id, fill)
+    elif isinstance(p, UPDATES):
+        record_type, ref = _update_target(p)
+        before = await _fact(repo, record_type, ref)
+        after = _updated_fact(p, before)
+        if assertion_fingerprint(before) != assertion_fingerprint(after):
+            updater = {
+                RecordType.POSITION: repo.update_position,
+                RecordType.EDUCATION: repo.update_education,
+                RecordType.CERTIFICATE: repo.update_certificate,
+                RecordType.AWARD: repo.update_award,
+            }[record_type]
+            await updater(before.id, after.model_dump(exclude={"id"}))
+        await _attach_fact(repo, record_type, before.id, document_id, p, original, original_target)
     elif isinstance(p, CreateEducation | CreateLanguage | CreateCertificate | CreateAward):
-        values = p.model_dump(exclude={"action"})
+        values = p.model_dump(exclude={"action", "excerpt"})
         if isinstance(p, CreateEducation):
             rec_type, rec_id = RecordType.EDUCATION, (await repo.insert_education(values)).id
         elif isinstance(p, CreateLanguage):
             rec_type, rec_id = RecordType.LANGUAGE, (await repo.insert_language(values)).id
         elif isinstance(p, CreateAward):
-            rec_type, rec_id = RecordType.AWARD, (await repo.insert_award(values)).id
+            rec_type = RecordType.AWARD
+            match, _ = _match_named_fact(p, await repo.list_awards())
+            if match:
+                await repo.update_award(match.id, _named_fill(p, match))
+                rec_id = match.id
+            else:
+                rec_id = (await repo.insert_award(values)).id
         else:
-            rec_type, rec_id = RecordType.CERTIFICATE, (await repo.insert_certificate(values)).id
-        await repo.insert_fact_source(rec_type, rec_id, document_id)
+            rec_type = RecordType.CERTIFICATE
+            match, _ = _match_named_fact(p, await repo.list_certificates())
+            if match:
+                await repo.update_certificate(match.id, _named_fill(p, match))
+                rec_id = match.id
+            else:
+                rec_id = (await repo.insert_certificate(values)).id
+        await _attach_fact(repo, rec_type, rec_id, document_id, p, original)
         return rec_id
-    elif isinstance(p, UpdateEducation):
-        stored_education = await repo.get_education(p.education_id)
-        highlights = list(stored_education.highlights)
-        seen = {normalize(h) for h in highlights}
-        for highlight in p.highlights:
-            if normalize(highlight) not in seen:
-                highlights.append(highlight)
-                seen.add(normalize(highlight))
-        links = {link.url: link.model_dump() for link in stored_education.links}
-        for link in p.links:
-            links.setdefault(link.url, link.model_dump())
-        await repo.update_education(
-            stored_education.id,
-            {
-                "grade": stored_education.grade or p.grade,
-                "summary": stored_education.summary or p.summary,
-                "highlights": highlights,
-                "links": list(links.values()),
-            },
-        )
-        await repo.insert_fact_source(RecordType.EDUCATION, stored_education.id, document_id)
     elif isinstance(p, LinkFactSource):
-        await repo.insert_fact_source(p.record_type, p.record_id, document_id)
+        await repo.insert_fact_source(p.record_type, p.record_id, document_id, excerpt=p.excerpt)
     elif isinstance(p, CreateClaim):
+        edited = _materially_edited(p, original)
         position_id = (await repo.get_position(p.position_id)).id if p.position_id else None
         claim = await repo.insert_claim(
             {
@@ -802,13 +995,32 @@ async def _apply(repo: Repository, p: Payload, document_id: str, claim_ids: set[
                 "position_id": position_id,
                 "keywords": p.keywords,
                 "status": ClaimStatus.CONFIRMED,
-                "origin": Origin.EXTRACTED,
-                "provability": claim_provability([p.evidence.kind]),
+                "origin": Origin.MANUAL if edited else Origin.EXTRACTED,
+                "provability": claim_provability(
+                    [EvidenceKind.SELF_DECLARED if edited else p.evidence.kind]
+                ),
             }
         )
-        await repo.insert_evidence(
-            {"claim_id": claim.id, "document_id": document_id, **p.evidence.model_dump()}
-        )
+        if edited:
+            if isinstance(original, CreateClaim):
+                await repo.insert_stale_evidence(
+                    {
+                        "claim_id": claim.id,
+                        "document_id": document_id,
+                        **original.evidence.model_dump(),
+                    },
+                    ClaimAssertion(
+                        type=original.type,
+                        text=original.text,
+                        text_lang=original.text_lang,
+                        position_id=original.position_id,
+                    ),
+                )
+            await repo.insert_evidence({"claim_id": claim.id, "kind": EvidenceKind.SELF_DECLARED})
+        else:
+            await repo.insert_evidence(
+                {"claim_id": claim.id, "document_id": document_id, **p.evidence.model_dump()}
+            )
         claim_ids.add(claim.id)
         return claim.id
     elif isinstance(p, AddEvidence):
@@ -816,6 +1028,49 @@ async def _apply(repo: Repository, p: Payload, document_id: str, claim_ids: set[
         await repo.insert_evidence(
             {"claim_id": claim.id, "document_id": document_id, **p.evidence.model_dump()}
         )
+        await repo.update_claim(claim.id, {"status": ClaimStatus.CONFIRMED})
         claim_ids.add(claim.id)
     # conflict and note items change nothing: accepting them means acknowledged
     return None
+
+
+async def _attach_fact(
+    repo: Repository,
+    record_type: RecordType,
+    record_id: str,
+    document_id: str,
+    p: Payload,
+    original: Payload | None,
+    original_target: FactAssertion | None = None,
+) -> None:
+    if not _materially_edited(p, original):
+        await repo.insert_fact_source(
+            record_type, record_id, document_id, excerpt=getattr(p, "excerpt", "")
+        )
+    elif original is not None:
+        values = original.model_dump(
+            exclude={
+                "action",
+                "excerpt",
+                "position_id",
+                "education_id",
+                "certificate_id",
+                "award_id",
+            }
+        )
+        if isinstance(original, UPDATES):
+            if original_target is None:
+                return  # Unknown legacy preimage cannot establish a historical assertion.
+            snapshot = _updated_fact(original, original_target)
+            record_id = snapshot.id
+            try:
+                await _fact(repo, record_type, record_id)
+            except NotFoundError:
+                # Deleted/rejected original targets retain their snapshot in the
+                # proposal context; never attach detached history to a new record.
+                return
+        else:
+            snapshot = FACT_MODELS[record_type].model_validate({**values, "id": record_id})
+        await repo.insert_stale_fact_source(
+            record_type, record_id, document_id, snapshot, excerpt=getattr(original, "excerpt", "")
+        )

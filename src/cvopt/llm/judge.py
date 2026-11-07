@@ -23,10 +23,16 @@ from cvopt.llm.tasks.judge_match import (
 )
 
 PAIR_TASK = "judge_match_pair"
+PAIR_VERSION = "2"
+
+
+def pair_cache_version() -> str:
+    """Both the pair schema and the semantic task prompt define a verdict."""
+    return f"{PAIR_VERSION}:{JUDGE_MATCH.version}"
 
 
 class PairKey(Model):
-    requirement: str
+    requirement: JudgedRequirement
     element: str
 
 
@@ -42,23 +48,23 @@ class Judge:
 
     async def verdicts(self, r: Requirement, texts: Sequence[str]) -> dict[str, MatchLevel]:
         """judge_match's level per distinct text, from the pair cache or the model."""
+        req = JudgedRequirement(
+            text=r.text, category=r.category, keywords=r.keywords, synonyms=r.synonyms
+        )
         out: dict[str, MatchLevel] = {}
         missing: list[str] = []
         for t in sorted(set(texts)):
             hit = await self._runner.cached(
                 PAIR_TASK,
-                JUDGE_MATCH.version,
+                pair_cache_version(),
                 JUDGE_MATCH.tier,
-                PairKey(requirement=r.text, element=t),
+                PairKey(requirement=req, element=t),
                 PairVerdict,
             )
             if hit is None:
                 missing.append(t)
             else:
                 out[t] = hit.level
-        req = JudgedRequirement(
-            text=r.text, category=r.category, keywords=r.keywords, synonyms=r.synonyms
-        )
         for start in range(0, len(missing), self._batch):
             chunk = missing[start : start + self._batch]
             refs = {f"E{i}": t for i, t in enumerate(chunk, start=1)}
@@ -73,9 +79,9 @@ class Judge:
                 out[refs[v.ref]] = level
                 await self._runner.store(
                     PAIR_TASK,
-                    JUDGE_MATCH.version,
+                    pair_cache_version(),
                     JUDGE_MATCH.tier,
-                    PairKey(requirement=r.text, element=refs[v.ref]),
+                    PairKey(requirement=req, element=refs[v.ref]),
                     PairVerdict(level=level),
                 )
         return out

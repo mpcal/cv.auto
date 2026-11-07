@@ -60,7 +60,8 @@ class JdService:
         if not extracted.needs_transcription:
             return extracted.text
         inp = TranscribeInput(media_type=extracted.media_type, data=path.read_bytes())
-        return (await runner.run(TRANSCRIBE_DOCUMENT, inp)).text
+        text = (await runner.run(TRANSCRIBE_DOCUMENT, inp)).text
+        return text + ("\n" + extracted.text if extracted.text else "")
 
     async def create_run(
         self,
@@ -69,6 +70,17 @@ class JdService:
         url: str | None = None,
         pdf: Path | None = None,
         text: Path | None = None,
+    ) -> RunResult:
+        with self._runners.operation(user, "jd_intake") as operation:
+            with operation.stage("jd_intake"):
+                result = await self._create_run(user, url=url, pdf=pdf, text=text)
+            (result.path / "intake-usage.json").write_text(
+                dump(operation.summary(status="succeeded")), encoding="utf-8"
+            )
+            return result
+
+    async def _create_run(
+        self, user: UserContext, *, url: str | None, pdf: Path | None, text: Path | None
     ) -> RunResult:
         """Exactly one source. Nothing is written unless the JD was read and parsed."""
         if sum(x is not None for x in (url, pdf, text)) != 1:

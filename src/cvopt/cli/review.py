@@ -5,6 +5,7 @@ from typing import Any
 
 import typer
 from pydantic import BaseModel, ValidationError
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -90,16 +91,29 @@ def show_item(item: ProposalItem, n: int, total: int, labels: dict[str, str]) ->
         table.add_row("[bold]evidence[/bold]", evidence["kind"])
         if evidence.get("excerpt"):
             table.add_row("[bold]excerpt[/bold]", f"[italic]{evidence['excerpt']}[/italic]")
+    if item.review_context and (conflict := item.review_context.conflict):
+        table.add_row("[bold]Review required[/bold]", escape(conflict.reason))
+        table.add_row(
+            "[bold]Prior assertion[/bold]",
+            escape(
+                _fmt(conflict.prior_assertion)
+                if conflict.prior_assertion
+                else "Unknown (legacy proposal)"
+            ),
+        )
+        table.add_row("[bold]Current assertion[/bold]", escape(_fmt(conflict.current_assertion)))
+        if conflict.source_excerpt:
+            table.add_row("[bold]Source excerpt[/bold]", escape(conflict.source_excerpt))
     title = f"Item {n} of {total} · #{item.seq} · {item.action.value}"
     console.print(Panel(table, title=title, title_align="left"))
 
 
 def _editable(model: BaseModel, prefix: str = "") -> list[tuple[str, Any]]:
-    """Fields in order, skipping the action and ids other than position_id."""
+    """Editable payload fields only, including references that may need repointing."""
     fields: list[tuple[str, Any]] = []
     for name in type(model).model_fields:
         value = getattr(model, name)
-        if name == "action" or (name.endswith("_id") and name != "position_id"):
+        if name == "action":
             continue
         if isinstance(value, BaseModel):
             fields += _editable(value, f"{prefix}{name}.")
@@ -158,22 +172,36 @@ async def walk(
     labels: dict[str, str],
 ) -> str:
     for n, item in enumerate(pending, start=1):
+        # Cascade rejection or another decision can invalidate the original walk list.
+        current = {i.seq: i for i in await c.ingestion.list_items(user, batch_id)}
+        item = current[item.seq]
+        if item.decision is not Decision.PENDING:
+            continue
         show_item(item, n, len(pending), labels)
         console.print(HELP, markup=False)
         choice = Prompt.ask("Decision", choices=CHOICES, default="a", case_sensitive=True)
         if choice == "a":
-            await c.ingestion.decide_item(user, batch_id, item.seq, Decision.ACCEPT)
+            try:
+                await c.ingestion.decide_item(user, batch_id, item.seq, Decision.ACCEPT)
+            except ConflictError as err:
+                console.print(escape(str(err)))
         elif choice == "r":
             res = await c.ingestion.decide_item(user, batch_id, item.seq, Decision.REJECT)
             for dep in res.rejected_dependents:
                 console.print(f"  also rejected #{dep.seq} {dep.action.value} (depends on it)")
         elif choice == "e":
             payload = edit_payload(item)
-            await c.ingestion.decide_item(user, batch_id, item.seq, Decision.ACCEPT, payload)
+            try:
+                await c.ingestion.decide_item(user, batch_id, item.seq, Decision.ACCEPT, payload)
+            except ConflictError as err:
+                console.print(escape(str(err)))
         elif choice == "A":
             remaining = len(pending) - n + 1
             if Confirm.ask(f"Accept all {remaining} remaining item(s)?"):
-                await c.ingestion.accept_all(user, batch_id)
+                try:
+                    await c.ingestion.accept_all(user, batch_id)
+                except ConflictError as err:
+                    console.print(escape(str(err)))
                 return "again"
             return await walk(c, user, batch_id, pending[n - 1 :], labels)
         elif choice == "q":

@@ -1,10 +1,11 @@
 """DataService (F2): manual management of the profile, fact records, claims and evidence."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
 
 from cvopt.context import UserContext
+from cvopt.domain.assertions import assertion_fingerprint
 from cvopt.domain.enums import ClaimStatus, ClaimType, EvidenceKind, Origin, Provability, RecordType
 from cvopt.domain.records import (
     Award,
@@ -12,6 +13,8 @@ from cvopt.domain.records import (
     Claim,
     Education,
     Evidence,
+    FactSource,
+    InvalidAttachment,
     Language,
     Position,
     Profile,
@@ -28,11 +31,12 @@ MANUAL_EVIDENCE = {EvidenceKind.SELF_DECLARED, EvidenceKind.LEARNABLE_DECLARED}
 class ClaimWithEvidence:
     claim: Claim
     evidence: list[Evidence]
+    invalid_evidence: list[InvalidAttachment] = field(default_factory=list)
 
 
 async def recompute_provability(repo: Repository, claim_ids: list[str]) -> list[Claim]:
     """Re-derive provability; a claim left without evidence returns to `proposed`."""
-    evidence = await repo.list_evidence(claim_ids)
+    evidence = await repo.list_evidence(claim_ids, active_only=True)
     updated = []
     for cid in claim_ids:
         kinds = [e.kind for e in evidence if e.claim_id == cid]
@@ -182,13 +186,25 @@ class DataService:
                 type=type, position_id=position_id, provability=provability, status=status
             )
             evidence = await repo.list_evidence([c.id for c in claims])
-        return [ClaimWithEvidence(c, [e for e in evidence if e.claim_id == c.id]) for c in claims]
+            invalid = await repo.list_invalid_evidence([c.id for c in claims])
+        return [
+            ClaimWithEvidence(
+                c,
+                [e for e in evidence if e.claim_id == c.id],
+                [e for e in invalid if e.raw.get("claim_id") == c.id],
+            )
+            for c in claims
+        ]
 
     async def get_claim(self, user: UserContext, ref: str) -> ClaimWithEvidence:
         repo = self._repos.for_user(user)
         async with repo.transaction():
             claim = await repo.get_claim(ref)
-            return ClaimWithEvidence(claim, await repo.list_evidence([claim.id]))
+            return ClaimWithEvidence(
+                claim,
+                await repo.list_evidence([claim.id]),
+                await repo.list_invalid_evidence([claim.id]),
+            )
 
     async def create_claim(
         self,
@@ -233,7 +249,56 @@ class DataService:
                     **fields,
                     "position_id": (await repo.get_position(fields["position_id"])).id,
                 }
-            return await repo.update_claim(ref, fields)
+            current = await repo.get_claim(ref)
+            active = await repo.list_evidence([current.id], active_only=True)
+            claim = await repo.update_claim(ref, fields)
+            if assertion_fingerprint(current) != assertion_fingerprint(claim):
+                kind = (
+                    EvidenceKind.LEARNABLE_DECLARED
+                    if active and all(e.kind is EvidenceKind.LEARNABLE_DECLARED for e in active)
+                    else EvidenceKind.SELF_DECLARED
+                )
+                await repo.insert_evidence({"claim_id": claim.id, "kind": kind})
+                [claim] = await recompute_provability(repo, [claim.id])
+                if (
+                    current.status is ClaimStatus.CONFIRMED
+                    and ClaimStatus(fields.get("status", current.status)) is ClaimStatus.CONFIRMED
+                ):
+                    claim = await repo.update_claim(claim.id, {"status": ClaimStatus.CONFIRMED})
+            return claim
+
+    async def confirm_claim(self, user: UserContext, ref: str) -> Claim:
+        repo = self._repos.for_user(user)
+        async with repo.transaction():
+            return await repo.update_claim(ref, {"status": ClaimStatus.CONFIRMED})
+
+    async def reconfirm_evidence(
+        self, user: UserContext, ref: str, *, excerpt: str | None = None
+    ) -> ClaimWithEvidence:
+        """Explicitly attest the current assertion using the old attachment's source."""
+        repo = self._repos.for_user(user)
+        async with repo.transaction():
+            old = await repo.get_evidence(ref)
+            values = old.model_dump(exclude={"id", "assertion", "state", "snapshot_origin"})
+            if excerpt is not None:
+                values["excerpt"] = excerpt
+            await repo.insert_evidence(values)
+            [claim] = await recompute_provability(repo, [old.claim_id])
+            return ClaimWithEvidence(claim, await repo.list_evidence([claim.id]))
+
+    async def reconfirm_fact_source(
+        self, user: UserContext, ref: str, *, excerpt: str | None = None
+    ) -> FactSource:
+        """Revalidate the owned current record against the explicitly selected source."""
+        repo = self._repos.for_user(user)
+        async with repo.transaction():
+            old = await repo.get_fact_source(ref)
+            return await repo.insert_fact_source(
+                old.record_type,
+                old.record_id,
+                old.document_id,
+                excerpt=old.excerpt if excerpt is None else excerpt,
+            )
 
     async def delete_claim(self, user: UserContext, ref: str) -> str:
         return await self._repos.for_user(user).delete_claim(ref)
@@ -273,9 +338,9 @@ class DataService:
     async def remove_evidence(self, user: UserContext, ref: str) -> ClaimWithEvidence:
         repo = self._repos.for_user(user)
         async with repo.transaction():
-            ev = await repo.get_evidence(ref)
-            await repo.delete_evidence(ev.id)
-            [claim] = await recompute_provability(repo, [ev.claim_id])
+            claim_id = await repo.evidence_claim_id(ref)
+            await repo.delete_evidence(ref)
+            [claim] = await recompute_provability(repo, [claim_id])
             return ClaimWithEvidence(claim, await repo.list_evidence([claim.id]))
 
     # --- documents ------------------------------------------------------------------

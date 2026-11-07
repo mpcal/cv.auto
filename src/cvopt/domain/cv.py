@@ -1,5 +1,7 @@
 """The JSON Resume subset cvopt reads and writes, and the element parser (P2 §7.1)."""
 
+import hashlib
+import json
 import re
 from datetime import date
 from typing import Any
@@ -7,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from cvopt.domain.base import Model, Month
-from cvopt.domain.enums import ElementKind
+from cvopt.domain.enums import DegreeLevel, ElementKind
 from cvopt.domain.records import EducationLink
 from cvopt.domain.rules import cefr_level, degree_level, language_code
 from cvopt.domain.text import split_sentences
@@ -98,6 +100,42 @@ class JSONResume(Lenient):
     certificates: list[JRCertificate] = []
     awards: list[JRAward] = []
     meta: dict[str, Any] = {}
+
+
+DEGREE_METADATA = "cvopt:degree_classifications"
+
+
+def education_fingerprint(entry: JREducation) -> str:
+    """Fingerprint the complete readable entry, including details, in canonical form."""
+    payload = json.dumps(entry.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def degree_classifications(
+    entries: list[dict[str, Any]], levels: list[DegreeLevel]
+) -> dict[str, Any]:
+    """Namespaced JSON Resume metadata for confirmed classifications, per pointer."""
+    return {
+        DEGREE_METADATA: {
+            f"/education/{i}": {
+                "fingerprint": education_fingerprint(JREducation.model_validate(entry)),
+                "degree_level": level.value,
+            }
+            for i, (entry, level) in enumerate(zip(entries, levels, strict=True))
+        }
+    }
+
+
+def confirmed_degree(cv: JSONResume, index: int, entry: JREducation) -> DegreeLevel:
+    """A matching generated annotation wins; edited/external entries use inference."""
+    metadata = cv.meta.get(DEGREE_METADATA)
+    record = metadata.get(f"/education/{index}") if isinstance(metadata, dict) else None
+    if isinstance(record, dict) and record.get("fingerprint") == education_fingerprint(entry):
+        try:
+            return DegreeLevel(record["degree_level"])
+        except (ValueError, TypeError, KeyError):
+            pass
+    return degree_level(entry.studyType)
 
 
 class CVElement(Model):
@@ -201,7 +239,7 @@ def parse_elements(cv: JSONResume, as_of: date, lang: str, p: Placement) -> list
                 kind=ElementKind.EDUCATION,
                 text=text,
                 placement=1.0,
-                meta={"degree_level": degree_level(e.studyType).value, "area": e.area},
+                meta={"degree_level": confirmed_degree(cv, i, e).value, "area": e.area},
             )
         )
     for i, lg in enumerate(cv.languages):

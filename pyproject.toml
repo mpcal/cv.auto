@@ -1,7 +1,7 @@
 [project]
 name = "cvopt"
 version = "0.1.0"
-description = "CV optimizer: tailors a CV to a job description from verified claims"
+description = "Ideal target CVs with evidence-aware profile coverage and gap explanations"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

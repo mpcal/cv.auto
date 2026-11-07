@@ -188,3 +188,44 @@ def test_export_and_delete_user(cli, tmp_path: Path) -> None:  # type: ignore[no
     assert len(json.loads(cli("position", "list", "--json"))) == 1
     assert "deleted" in cli("delete-user", "--confirm", "a@example.com")
     assert json.loads(cli("position", "list", "--json")) == []
+
+
+def test_explicit_claim_confirmation_and_evidence_reconfirmation(cli) -> None:
+    cid = created_id(cli("claim", "add", "--type", "skill", "--text", "Rust"))
+    cli("evidence", "add", cid, "--kind", "reference_person", "--reference", "Carol")
+    claim = json.loads(cli("claim", "list", "--json"))[0]
+    old = next(e for e in claim["evidence"] if e["kind"] == "reference_person")
+    cli("claim", "edit", cid, "--text", "Rust systems")
+    assert json.loads(cli("claim", "list", "--json"))[0]["provability"] == "medium"
+    cli("evidence", "reconfirm", old["id"])
+    claim = json.loads(cli("claim", "list", "--json"))[0]
+    assert claim["provability"] == "high"
+    for ev in claim["evidence"]:
+        cli("evidence", "rm", ev["id"])
+    cli("claim", "confirm", cid, code=1)
+    cli("evidence", "add", cid, "--kind", "self_declared")
+    assert json.loads(cli("claim", "list", "--json"))[0]["status"] == "proposed"
+    cli("claim", "confirm", cid)
+    assert json.loads(cli("claim", "list", "--json"))[0]["status"] == "confirmed"
+
+
+def test_claim_json_shows_invalid_history_and_evidence_rm_can_remove_it(
+    cli, tmp_path: Path
+) -> None:
+    import sqlite3
+
+    cli("claim", "add", "--type", "skill", "--text", "Rust")
+    [claim] = json.loads(cli("claim", "list", "--json"))
+    eid = claim["evidence"][0]["id"]
+    with sqlite3.connect(tmp_path / "cvopt.sqlite") as conn:
+        conn.execute("UPDATE evidence SET kind = ? WHERE id = ?", ("unknown_kind", eid))
+    [claim] = json.loads(cli("claim", "list", "--json"))
+    assert claim["evidence"] == []
+    [diagnostic] = claim["invalid_evidence"]
+    assert diagnostic["state"] == "invalid"
+    assert diagnostic["raw"]["kind"] == "unknown_kind"
+    assert "unknown_kind" not in diagnostic["validation_error"]
+    cli("evidence", "rm", eid)
+    [claim] = json.loads(cli("claim", "list", "--json"))
+    assert claim["invalid_evidence"] == []
+    assert claim["status"] == "proposed" and claim["provability"] == "none"

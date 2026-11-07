@@ -17,6 +17,7 @@ class RunInfo(Model):
     run_id: str
     name: str  # the folder name
     created_at: datetime
+    generated_at: datetime | None = None
     as_of: date  # reused when the CV is rescored
     jd_source: JDSource
     language: str

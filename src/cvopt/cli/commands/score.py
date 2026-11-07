@@ -7,8 +7,9 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from cvopt.cli.common import console, print_json, run_async
+from cvopt.cli.common import console, print_json, run_async, stderr_console
 from cvopt.domain.report import report_csv
+from cvopt.services.publication import pin_paths
 from cvopt.services.render import load_annotations
 from cvopt.services.scoring import standalone_report
 
@@ -29,8 +30,11 @@ def score(
     ] = False,
 ) -> None:
     """Score a CV against a requirement list."""
+    cv, requirements = pin_paths(cv, requirements)
+    if annotations is not None:
+        _, annotations = pin_paths(cv, annotations)
     day: date | None = as_of.date() if as_of else None
-    with console.status("Scoring…"):
+    with stderr_console.status("Scoring…"):
         s = run_async(ctx, lambda c, u: c.scoring.score(u, cv, requirements, day), writes=True)
     if report:
         settings = ctx.obj.settings
@@ -40,7 +44,7 @@ def score(
             rep.model_dump_json(indent=2) + "\n", encoding="utf-8"
         )
         (cv.parent / "score-report.csv").write_text(report_csv(rep), encoding="utf-8")
-        console.print(f"Wrote {cv.parent / 'score-report.json'} and .csv", highlight=False)
+        stderr_console.print(f"Wrote {cv.parent / 'score-report.json'} and .csv", highlight=False)
     if as_json:
         print_json(s.result.model_dump(mode="json"))
         return

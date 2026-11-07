@@ -136,7 +136,10 @@ fact_source = user_table(
     Column("record_type", String(16), nullable=False),
     Column("record_id", ID, nullable=False),
     Column("document_id", ID, nullable=False),
-    UniqueConstraint("user_id", "record_type", "record_id", "document_id"),
+    Column("excerpt", Text, nullable=False, default=""),
+    Column("assertion", Text, nullable=True),
+    Column("state", String(8), nullable=False, default="stale"),
+    Column("snapshot_origin", String(24), nullable=False, default="legacy_backfill"),
     user_ref("document_id", "source_document", ondelete="CASCADE"),
 )
 
@@ -161,6 +164,9 @@ evidence = user_table(
     Column("excerpt", Text, nullable=False),
     Column("reference_name", Text, nullable=False),
     Column("reference_contact", Text, nullable=False),
+    Column("assertion", Text, nullable=True),
+    Column("state", String(8), nullable=False, default="stale"),
+    Column("snapshot_origin", String(24), nullable=False, default="legacy_backfill"),
     user_ref("claim_id", "claim", ondelete="CASCADE"),
     user_ref("document_id", "source_document", ondelete="CASCADE"),
 )
@@ -182,6 +188,7 @@ proposal_item = user_table(
     Column("payload", Text, nullable=False),
     Column("decision", String(8), nullable=False),
     Column("note", Text, nullable=False),
+    Column("review_context", Text, nullable=True),
     UniqueConstraint("user_id", "batch_id", "seq"),
     user_ref("batch_id", "review_batch", ondelete="CASCADE"),
 )

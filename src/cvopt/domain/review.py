@@ -4,7 +4,7 @@ Ids inside payloads may reference another item of the same batch as `$item:<seq>
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -18,7 +18,7 @@ from cvopt.domain.enums import (
     ProposalAction,
     RecordType,
 )
-from cvopt.domain.records import EducationLink
+from cvopt.domain.records import FACT_MODELS, ClaimAssertion, EducationLink, FactAssertion
 
 ProfileField = Literal["name", "email", "phone", "city", "country", "website", "linkedin", "github"]
 
@@ -30,6 +30,7 @@ class SetProfileField(Model):
 
 
 class CreatePosition(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.CREATE_POSITION] = ProposalAction.CREATE_POSITION
     employer: str
     employer_location: str = ""
@@ -41,6 +42,7 @@ class CreatePosition(Model):
 class UpdatePosition(Model):
     """Fills empty fields only; None leaves a field untouched."""
 
+    excerpt: str = ""
     action: Literal[ProposalAction.UPDATE_POSITION] = ProposalAction.UPDATE_POSITION
     position_id: str
     employer_location: str | None = None
@@ -50,6 +52,7 @@ class UpdatePosition(Model):
 
 
 class CreateEducation(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.CREATE_EDUCATION] = ProposalAction.CREATE_EDUCATION
     institution: str
     area: str = ""
@@ -66,6 +69,7 @@ class CreateEducation(Model):
 class UpdateEducation(Model):
     """Fill missing descriptive fields and append previously unseen details."""
 
+    excerpt: str = ""
     action: Literal[ProposalAction.UPDATE_EDUCATION] = ProposalAction.UPDATE_EDUCATION
     education_id: str
     grade: str = ""
@@ -75,12 +79,14 @@ class UpdateEducation(Model):
 
 
 class CreateLanguage(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.CREATE_LANGUAGE] = ProposalAction.CREATE_LANGUAGE
     language_code: str
     level: CefrLevel
 
 
 class CreateCertificate(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.CREATE_CERTIFICATE] = ProposalAction.CREATE_CERTIFICATE
     name: str
     issuer: str = ""
@@ -89,6 +95,7 @@ class CreateCertificate(Model):
 
 
 class CreateAward(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.CREATE_AWARD] = ProposalAction.CREATE_AWARD
     title: str
     awarder: str = ""
@@ -96,7 +103,28 @@ class CreateAward(Model):
     summary: str = ""
 
 
+class UpdateCertificate(Model):
+    """Fill missing fields without replacing established values."""
+
+    action: Literal[ProposalAction.UPDATE_CERTIFICATE] = ProposalAction.UPDATE_CERTIFICATE
+    certificate_id: str
+    issuer: str = ""
+    issued_month: Month | None = None
+    url: str = ""
+    excerpt: str = ""
+
+
+class UpdateAward(Model):
+    action: Literal[ProposalAction.UPDATE_AWARD] = ProposalAction.UPDATE_AWARD
+    award_id: str
+    awarder: str = ""
+    awarded_month: Month | None = None
+    summary: str = ""
+    excerpt: str = ""
+
+
 class LinkFactSource(Model):
+    excerpt: str = ""
     action: Literal[ProposalAction.LINK_FACT_SOURCE] = ProposalAction.LINK_FACT_SOURCE
     record_type: RecordType
     record_id: str
@@ -129,7 +157,9 @@ class AddEvidence(Model):
 
 class Conflict(Model):
     action: Literal[ProposalAction.CONFLICT] = ProposalAction.CONFLICT
-    record_type: Literal["profile", "position", "education", "language", "certificate", "claim"]
+    record_type: Literal[
+        "profile", "position", "education", "language", "certificate", "award", "claim"
+    ]
     record_id: str
     field: str
     stored_value: str
@@ -150,6 +180,8 @@ Payload = Annotated[
     | CreateLanguage
     | CreateCertificate
     | CreateAward
+    | UpdateCertificate
+    | UpdateAward
     | LinkFactSource
     | CreateClaim
     | AddEvidence
@@ -157,6 +189,64 @@ Payload = Annotated[
     | Note,
     Field(discriminator="action"),
 ]
+
+
+class ReviewConflict(Model):
+    reason: str
+    prior_target_id: str | None = None
+    current_target_id: str | None = None
+    prior_assertion: dict[str, Any] | None = None
+    current_assertion: dict[str, Any] | None = None
+    source_excerpt: str = ""
+
+
+class ReviewContext(Model):
+    """Protected provenance; never accepted from an ordinary payload edit."""
+
+    origin: Literal["captured", "legacy_unknown"] = "legacy_unknown"
+    original_payload: Payload | None = None
+    original_target_id: str | None = None
+    original_target_assertion: dict[str, Any] | None = None
+    target_id: str | None = None
+    target_assertion: dict[str, Any] | None = None
+    target_fingerprint: str | None = None
+    conflict: ReviewConflict | None = None
+
+
+def review_target(payload: Payload) -> tuple[RecordType | Literal["claim"], str] | None:
+    if isinstance(payload, AddEvidence):
+        return "claim", payload.claim_id
+    if isinstance(payload, LinkFactSource):
+        return payload.record_type, payload.record_id
+    if isinstance(payload, UpdatePosition):
+        return RecordType.POSITION, payload.position_id
+    if isinstance(payload, UpdateEducation):
+        return RecordType.EDUCATION, payload.education_id
+    if isinstance(payload, UpdateCertificate):
+        return RecordType.CERTIFICATE, payload.certificate_id
+    if isinstance(payload, UpdateAward):
+        return RecordType.AWARD, payload.award_id
+    return None
+
+
+def created_assertion(payload: Payload, record_id: str) -> ClaimAssertion | FactAssertion | None:
+    """Assertion created by a proposal, using a stable batch reference before apply."""
+    if isinstance(payload, CreateClaim):
+        return ClaimAssertion(
+            **payload.model_dump(include={"type", "text", "text_lang", "position_id"})
+        )
+    record_types = {
+        CreatePosition: RecordType.POSITION,
+        CreateEducation: RecordType.EDUCATION,
+        CreateLanguage: RecordType.LANGUAGE,
+        CreateCertificate: RecordType.CERTIFICATE,
+        CreateAward: RecordType.AWARD,
+    }
+    if record_type := record_types.get(type(payload)):
+        return FACT_MODELS[record_type].model_validate(
+            {**payload.model_dump(exclude={"action", "excerpt"}), "id": record_id}
+        )
+    return None
 
 
 class ProposalItem(Model):
@@ -167,6 +257,7 @@ class ProposalItem(Model):
     payload: Payload
     decision: Decision = Decision.PENDING
     note: str = ""
+    review_context: ReviewContext | None = None
 
     @property
     def action(self) -> ProposalAction:

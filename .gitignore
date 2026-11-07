@@ -15,6 +15,7 @@ wheels/
 .ruff_cache/
 .hypothesis/
 .import_linter_cache/
+.superpowers/
 
 # Secrets
 .env

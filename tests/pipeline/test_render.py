@@ -145,7 +145,7 @@ def test_annotated_pdf_marks_exactly_exaggerated_and_invented(
     assert walk(cv_page, CV) == expected
     assert "Annotated target CV for Senior Data Scientist at Nordwind Retail AG" in cv_page
     appendix = pdf_text(res.path).split("REPORT", 1)[1]
-    assert "Score: 78.5 / 100" in appendix and "Swiss work permit" in appendix
+    assert "Target CV score: 78.5 / 100" in appendix and "Swiss work permit" in appendix
 
 
 def test_changed_text_loses_its_mark(tmp_path: Path) -> None:
@@ -324,3 +324,174 @@ def test_certificate_groups_flow_across_pages_without_clipping(tmp_path: Path) -
         assert all(
             0 < y < float(page.mediabox.height) for text, y in positions if "Certificate" in text
         )
+
+
+@pytest.mark.parametrize(
+    "lang,profile_label,requirement_label",
+    [
+        ("en", "Profile-supported coverage", "Requirement coverage"),
+        ("de", "Profilgestützte Abdeckung", "Anforderungsabdeckung"),
+    ],
+)
+def test_explanatory_pdf_has_metrics_requirements_sources_and_deduplicates_quotes(
+    tmp_path, lang, profile_label, requirement_label
+):
+    from cvopt.domain.provenance import AssertionProvenance, SourceProvenance, StatementProvenance
+    from cvopt.domain.report import RequirementExplanation, RequirementSupport
+
+    quote = "Unique source paragraph demonstrating supported delivery in Python."
+    source = SourceProvenance(
+        id="source",
+        kind="reference_letter",
+        state="stale",
+        snapshot_origin="captured",
+        document_id="doc",
+        document_name="letter.pdf",
+        excerpt=quote,
+    )
+    a = AssertionProvenance(
+        ref="claim:a",
+        original_text="Original Python delivery",
+        eligible=True,
+        provability=Provability.MEDIUM,
+        sources=[source],
+    )
+    report = REPORT.model_copy(
+        update={
+            "profile_supported_score": 90.0,
+            "target_minus_profile": -11.5,
+            "requirements": [
+                RequirementExplanation(
+                    requirement_id="R01",
+                    requirement_text="Python delivery",
+                    category="hard_skill",
+                    importance="must",
+                    profile_coverage=0.9,
+                    target_coverage=0.785,
+                    supporting_elements=[
+                        RequirementSupport(
+                            element_id="claim:a",
+                            text="Original Python delivery",
+                            value=0.9,
+                            winning_share=1,
+                            provenance_refs=["claim:a"],
+                        )
+                    ],
+                    target_statements=[
+                        RequirementSupport(
+                            element_id="/basics/label",
+                            text="Lead Data Scientist",
+                            value=0.785,
+                            winning_share=1,
+                            provenance_refs=["claim:a"],
+                        )
+                    ],
+                    labels=["evidence", "partial support"],
+                    next_actions=["Review recorded source.", "Clarify recorded scope."],
+                )
+            ],
+            "provenance": [
+                StatementProvenance(
+                    element_id=f"statement:{i}",
+                    text=f"Statement {i}",
+                    source_claim_ids=["a"],
+                    transformation_reason="rephrased",
+                    sources=[a],
+                )
+                for i in range(8)
+            ],
+        }
+    )
+    model = build_render_model(CV, SETTINGS, lang=lang, annotations=annotations(), report=report)
+    result = TypstRenderer().render(model, tmp_path / f"report-{lang}.pdf")
+    text = pdf_text(result.path)
+    assert profile_label in text and requirement_label in text
+    assert "letter.pdf" in text
+    expected = (
+        ("Hard skill", "Required", "Selected", "Exaggerated", "Medium", "Reference letter", "Stale")
+        if lang == "en"
+        else (
+            "Fachkompetenz",
+            "Erforderlich",
+            "Ausgewählt",
+            "Übertrieben",
+            "Mittel",
+            "Arbeitszeugnis",
+            "Veraltet",
+        )
+    )
+    assert all(value in text for value in expected)
+    assert "Original Python delivery" in text
+    assert text.count(quote) == 1
+    assert "-11.5" in text
+
+
+@pytest.mark.parametrize("lang,row_label", [("en", "CV row"), ("de", "CV-Zeile")])
+def test_pdf_requirement_support_uses_readable_refs_and_keeps_ids_in_appendix(
+    tmp_path, lang, row_label
+):
+    from cvopt.domain.provenance import AssertionProvenance
+    from cvopt.domain.report import RequirementExplanation, RequirementSupport
+
+    claim_ref = "claim:01SYNTHETICCLAIMIDENTIFIER00"
+    position_ref = "position:01SYNTHETICPOSITIONIDENT000"
+    pointer = "/work/0/highlights/0"
+    hit = RequirementSupport(
+        element_id=claim_ref,
+        text="Python delivery",
+        value=1,
+        winning_share=1,
+        provenance_refs=[claim_ref, position_ref],
+        position_ref=position_ref,
+        start_month="2020-01",
+        end_month="2022-12",
+    )
+    report = REPORT.model_copy(
+        update={
+            "rows": [
+                REPORT.rows[0].model_copy(
+                    update={"row": 7, "element_id": pointer, "claim": "Python delivery"}
+                )
+            ],
+            "requirements": [
+                RequirementExplanation(
+                    requirement_id="R1",
+                    requirement_text="Python experience",
+                    category="years_experience",
+                    importance="must",
+                    profile_coverage=1,
+                    target_coverage=1,
+                    supporting_elements=[hit],
+                    target_statements=[hit.model_copy(update={"element_id": pointer})],
+                )
+            ],
+            "profile_assertions": [
+                AssertionProvenance(
+                    ref=claim_ref,
+                    original_text="Python delivery",
+                    eligible=True,
+                    provability="medium",
+                ),
+                AssertionProvenance(
+                    ref=position_ref,
+                    original_text="Engineer · Example",
+                    eligible=True,
+                    provability="medium",
+                ),
+            ],
+        }
+    )
+    model = build_render_model(CV, SETTINGS, lang=lang, annotations=annotations(), report=report)
+    text = pdf_text(TypstRenderer().render(model, tmp_path / f"readable-{lang}.pdf").path)
+    assert f"{row_label} 7" in text
+    requirement_text = text.split("R1 · Python experience", 1)[1].split(
+        "Original assertions and sources" if lang == "en" else "Originalaussagen und Quellen", 1
+    )[0]
+    assert (
+        claim_ref not in requirement_text
+        and position_ref not in requirement_text
+        and pointer not in requirement_text
+    )
+    assert "A2 · 2020-01 - 2022-12" in requirement_text
+    assert claim_ref in text and position_ref in text
+    assert report.requirements[0].target_statements[0].element_id == pointer

@@ -1,6 +1,9 @@
 """Profile, fact records, claims, evidence and source documents (P2 §4.3)."""
 
 from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import model_validator
 
 from cvopt.domain.base import CefrLevel, Model, Month
 from cvopt.domain.enums import (
@@ -11,6 +14,7 @@ from cvopt.domain.enums import (
     EvidenceKind,
     Origin,
     Provability,
+    RecordType,
 )
 
 
@@ -93,7 +97,34 @@ class Claim(Model):
     provability: Provability  # always set by rules.claim_provability()
 
 
-class Evidence(Model):
+class ClaimAssertion(Model):
+    """Material claim fields; search hints and derived state are excluded."""
+
+    type: ClaimType
+    text: str
+    text_lang: str
+    position_id: str | None
+
+
+FactAssertion = Position | Education | Language | Certificate | Award
+
+
+class Attachment(Model):
+    state: Literal["active", "stale"] = "stale"
+    snapshot_origin: Literal["captured", "legacy_backfill"] = "legacy_backfill"
+
+
+class InvalidAttachment(Model):
+    """Structurally unreadable history; never usable as assertion support."""
+
+    id: str
+    attachment_type: Literal["evidence", "fact_source"]
+    state: Literal["invalid"] = "invalid"
+    validation_error: str
+    raw: dict[str, Any]
+
+
+class Evidence(Attachment):
     id: str
     claim_id: str
     kind: EvidenceKind
@@ -101,6 +132,33 @@ class Evidence(Model):
     excerpt: str = ""
     reference_name: str = ""
     reference_contact: str = ""
+    assertion: ClaimAssertion | None = None
+
+
+class FactSource(Attachment):
+    id: str
+    record_type: RecordType
+    record_id: str
+    document_id: str
+    excerpt: str = ""
+    assertion: FactAssertion | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def typed_assertion(cls, values: Any) -> Any:
+        if isinstance(values, dict) and isinstance(values.get("assertion"), dict):
+            model = FACT_MODELS[RecordType(values["record_type"])]
+            values = {**values, "assertion": model.model_validate(values["assertion"])}
+        return values
+
+
+FACT_MODELS: dict[RecordType, type[Position | Education | Language | Certificate | Award]] = {
+    RecordType.POSITION: Position,
+    RecordType.EDUCATION: Education,
+    RecordType.LANGUAGE: Language,
+    RecordType.CERTIFICATE: Certificate,
+    RecordType.AWARD: Award,
+}
 
 
 class SourceDocument(Model):

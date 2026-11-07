@@ -57,3 +57,46 @@ async def test_language_detection() -> None:
     assert detector.detect((await EXTRACT.extract(CV)).text) == "en"
     assert detector.detect((await EXTRACT.extract(LETTER)).text) == "de"
     assert detector.detect("") == "und"
+
+
+@pytest.mark.parametrize("blank", [False, True])
+async def test_mixed_pdf_checks_each_page_and_ignores_truly_blank_pages(
+    tmp_path: Path, blank: bool
+) -> None:
+    import io
+
+    import typst
+    from pypdf import PdfReader, PdfWriter
+
+    text = typst.compile(b"#set page(width: 10cm, height: 10cm)\n" + b"Extracted text " * 30)
+    writer = PdfWriter()
+    writer.add_page(PdfReader(io.BytesIO(text)).pages[0])
+    if blank:
+        writer.add_blank_page(width=100, height=100)
+    else:
+        import struct
+        import zlib
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(data))
+                + kind
+                + data
+                + struct.pack(">I", zlib.crc32(kind + data))
+            )
+
+        image = tmp_path / "scan.png"
+        image.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff"))
+            + chunk(b"IEND", b"")
+        )
+        scanned = typst.compile(b'#image("scan.png")', root=str(tmp_path))
+        writer.add_page(PdfReader(io.BytesIO(scanned)).pages[0])
+    path = tmp_path / "mixed.pdf"
+    writer.write(path)
+    out = await EXTRACT.extract(path)
+    assert out.needs_transcription is (not blank)
+    if not blank:
+        assert "Extracted text" not in out.text

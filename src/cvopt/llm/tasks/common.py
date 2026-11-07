@@ -12,6 +12,7 @@ MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 class ExPosition(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     employer: str
     employer_location: str
     title: str
@@ -20,6 +21,7 @@ class ExPosition(Model):
 
 
 class ExEducation(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     institution: str
     area: str
     degree_type: str  # as written
@@ -33,11 +35,13 @@ class ExEducation(Model):
 
 
 class ExLanguage(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     language_code: str  # ISO 639-1
     level: str  # A1–C2 or native
 
 
 class ExCertificate(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     name: str
     issuer: str
     issued_month: str
@@ -45,6 +49,7 @@ class ExCertificate(Model):
 
 
 class ExAward(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     title: str
     awarder: str
     awarded_month: str
@@ -52,11 +57,13 @@ class ExAward(Model):
 
 
 class ExSkillClaim(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     text: str
     keywords: list[str]
 
 
 class ExClaim(Model):
+    excerpt: str = ""  # missing on historical output; current tasks require a quotation
     type: ClaimType
     text: str
     keywords: list[str]
@@ -97,3 +104,8 @@ def check_claim_text(text: str, keywords: list[str], where: str) -> None:
 
 def tagged(tag: str, text: str) -> str:
     return f"<{tag}>\n{text}\n</{tag}>"
+
+
+def check_quote(text: str, excerpt: str, where: str) -> None:
+    if not excerpt.strip() or excerpt not in text:
+        raise ValueError(f"{where}.excerpt must be a nonempty verbatim quote of the document")

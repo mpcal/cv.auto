@@ -9,9 +9,9 @@ import json
 import logging
 import math
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -20,10 +20,15 @@ import jsonschema
 
 from cvopt.config import Settings
 from cvopt.context import UserContext
-from cvopt.domain.candidates import Annotation, Candidate
-from cvopt.domain.cv import CVElement, JSONResume, Placement, highlight_placement, parse_elements
+from cvopt.domain.candidates import Annotation, Candidate, RecordSource
+from cvopt.domain.cv import (
+    CVElement,
+    JSONResume,
+    Placement,
+    highlight_placement,
+    parse_elements,
+)
 from cvopt.domain.enums import (
-    ClaimStatus,
     ClaimType,
     ElementKind,
     Fidelity,
@@ -33,24 +38,18 @@ from cvopt.domain.enums import (
     Slot,
 )
 from cvopt.domain.enums import RequirementCategory as C
+from cvopt.domain.facts import quantities
 from cvopt.domain.jd import JobDescription, Requirement
 from cvopt.domain.optimizer import Optimizer, Selection, SelectionParams, tie_key
+from cvopt.domain.provenance import StatementProvenance, content_fingerprint
 from cvopt.domain.records import (
-    Award,
-    Certificate,
     Claim,
-    Education,
-    Language,
     Position,
-    Profile,
 )
 from cvopt.domain.report import DroppedClaim, Report, StatementInfo, build_report, report_csv
 from cvopt.domain.rules import (
     Vocabulary,
-    fact_record_provability,
-    language_display,
     more_altered,
-    order_positions,
     passes_hard_facts,
     statement_provability,
 )
@@ -59,7 +58,7 @@ from cvopt.domain.scoring import ScoreResult, ScoringParams, score
 from cvopt.domain.text import contains_term, normalize
 from cvopt.domain.validator import PlacedStatement, validate_statements
 from cvopt.errors import InputError, ValidationFailed
-from cvopt.llm.judge import Judge
+from cvopt.llm.judge import PAIR_TASK, Judge, pair_cache_version
 from cvopt.llm.runner import TaskRunner, TaskRunnerFactory
 from cvopt.llm.task import Task
 from cvopt.llm.tasks.classify_fidelity import CLASSIFY_FIDELITY, FidelityInput, FidelityItem
@@ -75,17 +74,30 @@ from cvopt.llm.tasks.generate_variants import (
     VariantsInput,
 )
 from cvopt.llm.tasks.group_skills import GROUP_SKILLS, GroupInput
-from cvopt.llm.tasks.translate import TRANSLATE, TextRef, TranslateInput
+from cvopt.llm.tasks.judge_match import JUDGE_MATCH
+from cvopt.llm.tasks.translate import TRANSLATE
+from cvopt.llm.tasks.verify_facts import VERIFY_FACTS, FactItem, FactsInput
 from cvopt.llm.tasks.write_summary import WRITE_SUMMARY, SummaryInput
 from cvopt.ports import FileStore, RepositoryFactory
+from cvopt.services.profile import (
+    Facts,
+    ProfileCoverageService,
+    element_ref,
+    fact_sections,
+    translate_claims,
+)
+from cvopt.services.publication import RunPublication, owned_artifact, selected_generation
 from cvopt.services.render import RenderService, build_render_model
+from cvopt.services.reports import explain_report
 from cvopt.services.scoring import (
     ScoringService,
     load_requirements,
     placement,
     read_json,
+    scoring_context,
     scoring_params,
 )
+from cvopt.services.usage import publication_usage
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +109,7 @@ TASKS: list[Task[Any, Any]] = [
     CLASSIFY_FIDELITY,
     WRITE_SUMMARY,
     GROUP_SKILLS,
+    VERIFY_FACTS,
 ]
 SLOT_KIND = {
     Slot.HEADLINE: ElementKind.HEADLINE,
@@ -112,21 +125,6 @@ SKILL_MAX_CHARS = 40  # longer skill claims are sentences, not keywords
 
 def dump(data: object) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-
-
-@dataclass
-class Facts:
-    """The user's confirmed data, as generation sees it."""
-
-    profile: Profile
-    positions: list[Position]  # ordered as in P1 §6.2
-    education: list[Education]
-    languages: list[Language]
-    certificates: list[Certificate]
-    awards: list[Award]
-    claims: dict[str, Claim]  # confirmed claims, text in the JD's language
-    original_text: dict[str, str]  # claim id -> stored text
-    fact_provability: dict[tuple[RecordType, str], Provability]
 
 
 @dataclass
@@ -191,12 +189,37 @@ class GenerationService:
 
     async def generate(self, user: UserContext, run_ref: str) -> GenerationResult:
         run_dir = self._files.run_dir(user, run_ref)
-        info = RunInfo.model_validate(read_json(run_dir / "run.json", "run.json"))
-        jd = load_requirements(run_dir / "requirements.json")
-        pipeline = _Pipeline(self, user, jd, info.as_of)
-        await pipeline.run()
-        written = pipeline.write(run_dir, info)
-        return GenerationResult(run_dir, pipeline.final_score.total, written)
+        selected_generation(run_dir)
+        # Validate both inputs before reading either or beginning any provider work.
+        info_path = owned_artifact(run_dir / "run.json", run_dir)
+        requirements_path = owned_artifact(run_dir / "requirements.json", run_dir)
+        publication = RunPublication(run_dir)
+        with (
+            self._runners.operation(user, "generation") as operation,
+            publication.attempt(usage=operation.summary) as stage,
+        ):
+            # Output metadata is pinned; requirements.json remains editable input.
+            info = RunInfo.model_validate(read_json(info_path, "run.json"))
+            jd = load_requirements(requirements_path)
+            pipeline = _Pipeline(self, user, jd, info.as_of)
+            await pipeline.run()
+            with operation.stage("write"):
+                written = pipeline.write(stage.path, info)
+            (stage.path / "usage.json").write_text(
+                dump(publication_usage(run_dir, operation.summary(status="succeeded"))),
+                encoding="utf-8",
+            )
+            with operation.stage("publish"):
+                stage.publish()
+        return GenerationResult(
+            run_dir,
+            pipeline.final_score.total,
+            [
+                run_dir
+                / ("requirements-snapshot.json" if p.name == "requirements.json" else p.name)
+                for p in written
+            ],
+        )
 
 
 class _Pipeline:
@@ -210,6 +233,7 @@ class _Pipeline:
         self.params: ScoringParams = scoring_params(self.s)
         self.placement: Placement = placement(self.s)
         self.judge = Judge(self.runner, self.params, self.s.matching.judge_batch_size)
+        self.profile_service = ProfileCoverageService(svc._repos, svc._runners, self.s)
         self.pool = Pool()
         self.values: dict[tuple[str, str], float] = {}
         self.relevance: dict[str, dict[str, float]] = {}  # claim id -> req id -> value
@@ -220,54 +244,10 @@ class _Pipeline:
     # --- step 1: load ------------------------------------------------------------------
 
     async def load(self) -> Facts:
-        repo = self.svc._repos.for_user(self.user)
-        claims = await repo.list_claims(status=ClaimStatus.CONFIRMED)
-        docs = {d.id: d.kind for d in await repo.list_documents()}
-        fact_prov: dict[tuple[RecordType, str], Provability] = {}
-        education = await repo.list_education()
-        languages = await repo.list_languages()
-        certificates = await repo.list_certificates()
-        for rtype, records in (
-            (RecordType.EDUCATION, education),
-            (RecordType.LANGUAGE, languages),
-            (RecordType.CERTIFICATE, certificates),
-        ):
-            for r in records:
-                kinds = [
-                    docs[d] for d in await repo.fact_source_documents(rtype, r.id) if d in docs
-                ]
-                fact_prov[rtype, r.id] = fact_record_provability(kinds)
-        return Facts(
-            profile=await repo.get_profile(),
-            positions=order_positions(await repo.list_positions()),
-            education=education,
-            languages=languages,
-            certificates=certificates,
-            awards=await repo.list_awards(),
-            claims={c.id: c for c in claims},
-            original_text={c.id: c.text for c in claims},
-            fact_provability=fact_prov,
-        )
-
-    # --- step 2: translate -------------------------------------------------------------
+        return await self.profile_service.load(self.user)
 
     async def translate(self, facts: Facts) -> None:
-        foreign = sorted(
-            (c for c in facts.claims.values() if c.text_lang != self.lang), key=lambda c: c.id
-        )
-        for start in range(0, len(foreign), TRANSLATE_BATCH):
-            chunk = foreign[start : start + TRANSLATE_BATCH]
-            refs = {f"T{i}": c for i, c in enumerate(chunk, start=1)}
-            out = await self.runner.run(
-                TRANSLATE,
-                TranslateInput(
-                    texts=[TextRef(ref=r, text=c.text) for r, c in refs.items()],
-                    target_language=self.lang,
-                ),
-            )
-            for t in out.translations:
-                c = refs[t.ref]
-                facts.claims[c.id] = c.model_copy(update={"text": t.text, "text_lang": self.lang})
+        await translate_claims(facts, self.lang, self.runner, self.s)
 
     # --- elements --------------------------------------------------------------------
 
@@ -358,6 +338,7 @@ class _Pipeline:
         intended: Fidelity,
         position_id: str | None,
         *,
+        source_record_refs: Sequence[str] = (),
         inferred_from: Sequence[str] = (),
         assertion_key: str | None = None,
         inferable: bool = False,
@@ -371,6 +352,7 @@ class _Pipeline:
             position_id=position_id,
             text=text.strip(),
             source_claim_ids=sources,
+            source_record_refs=list(source_record_refs),
             fidelity=intended,
             provability=Provability.NONE,
             inferred_from=list(inferred_from),
@@ -529,6 +511,24 @@ class _Pipeline:
                     inferable=inv.inferable,
                 )
 
+    def record_sources(self, facts: Facts, c: Candidate) -> list[RecordSource]:
+        records = {f"position:{p.id}": p for p in facts.positions}
+        return [
+            RecordSource(
+                ref=ref,
+                text=records[ref].title,
+                provability=facts.fact_provability.get(
+                    (RecordType.POSITION, records[ref].id), Provability.MEDIUM
+                ),
+            )
+            for ref in c.source_record_refs
+        ]
+
+    def sources(self, facts: Facts, c: Candidate) -> list[Claim | RecordSource]:
+        return [facts.original_claims[s] for s in c.source_claim_ids] + self.record_sources(
+            facts, c
+        )
+
     # --- step 5: verify -------------------------------------------------------------------
 
     async def verify(self, facts: Facts, cands: Sequence[Candidate], vocab: Vocabulary) -> None:
@@ -549,7 +549,7 @@ class _Pipeline:
                             FidelityItem(
                                 ref=f"X{i}",
                                 text=c.text,
-                                sources=[facts.claims[s].text for s in c.source_claim_ids],
+                                sources=[s.text for s in self.sources(facts, c)],
                             )
                             for i, c in enumerate(batch, start=1)
                         ]
@@ -564,13 +564,74 @@ class _Pipeline:
                 final = more_altered(self.pool.intended[c.id], Fidelity(v.fidelity))
                 self.pool.classified[c.id] = v.reason
                 self.pool.cands[c.id] = c.model_copy(update={"fidelity": final})
+        contextual = [
+            self.pool.cands[c.id]
+            for c in cands
+            if c.id not in self.pool.discarded
+            and (
+                (
+                    self.pool.cands[c.id].fidelity is not Fidelity.INVENTED
+                    and c.text not in [s.text for s in self.sources(facts, c)]
+                )
+                or (
+                    self.pool.cands[c.id].fidelity is Fidelity.INVENTED
+                    and not c.source_claim_ids
+                    and not c.source_record_refs
+                    and quantities(c.text)
+                    and not any(ch.isdigit() for ch in c.text)
+                )
+            )
+        ]
+        for start in range(0, len(contextual), CLASSIFY_BATCH):
+            batch = contextual[start : start + CLASSIFY_BATCH]
+            fact_out = await self.runner.run(
+                VERIFY_FACTS,
+                FactsInput(
+                    items=[
+                        FactItem(
+                            ref=f"X{i}",
+                            text=c.text,
+                            sources=(
+                                [s.text for s in facts.original_claims.values()]
+                                + [f"{p.title} at {p.employer}" for p in facts.positions]
+                                if c.fidelity is Fidelity.INVENTED
+                                else [s.text for s in self.sources(facts, c)]
+                            ),
+                            mode="invented" if c.fidelity is Fidelity.INVENTED else "sourced",
+                            name_hints=(
+                                [
+                                    term
+                                    for r in self.jd.requirements
+                                    for term in [*r.keywords, *r.synonyms]
+                                ]
+                                if c.fidelity is Fidelity.INVENTED
+                                else []
+                            ),
+                        )
+                        for i, c in enumerate(batch, start=1)
+                    ]
+                ),
+            )
+            for verdict in fact_out.verdicts:
+                if not verdict.facts_preserved:
+                    self.pool.discarded[batch[int(verdict.ref[1:]) - 1].id] = (
+                        f"factual context: {verdict.reason}"
+                    )
+                elif (checked := batch[int(verdict.ref[1:]) - 1]).fidelity is Fidelity.INVENTED:
+                    self.pool.cands[checked.id] = checked.model_copy(
+                        update={"numeric_name_spans": verdict.numeric_name_spans}
+                    )
         for c in cands:
             c = self.pool.cands[c.id]
-            sources = [facts.claims[s] for s in c.source_claim_ids]
+            if c.id in self.pool.discarded:
+                continue
+            sources = self.sources(facts, c)
             if c.source_claim_ids and c.fidelity is Fidelity.INVENTED:
                 self.pool.discarded[c.id] = "classified invented although built from claims"
                 continue
-            if not passes_hard_facts(c.text, c.fidelity, sources, vocab):
+            if not passes_hard_facts(
+                c.text, c.fidelity, sources, vocab, numeric_name_spans=c.numeric_name_spans
+            ):
                 self.pool.discarded[c.id] = "hard-fact check failed"
                 continue
             prov = statement_provability(
@@ -708,16 +769,20 @@ class _Pipeline:
             fb = self.candidate(facts, Slot.SUMMARY, c.text, [c.id], Fidelity.UNMODIFIED, None)
             self.fallback.add(fb.id)
             made.append(fb)
-        # Fallback headline: the most recent position's title, backed by its claims.
+        # A position title is a fixed-record assertion, independent of its claims.
         for pos in facts.positions:
-            backing = sorted(c.id for c in facts.claims.values() if c.position_id == pos.id)
-            if backing:
-                fb = self.candidate(
-                    facts, Slot.HEADLINE, pos.title, backing, Fidelity.UNMODIFIED, None
-                )
-                self.fallback.add(fb.id)
-                made.append(fb)
-                break
+            fb = self.candidate(
+                facts,
+                Slot.HEADLINE,
+                pos.title,
+                [],
+                Fidelity.UNMODIFIED,
+                None,
+                source_record_refs=[f"position:{pos.id}"],
+            )
+            self.fallback.add(fb.id)
+            made.append(fb)
+            break
         await self.verify(facts, made, vocab)
         return [self.pool.cands[c.id] for c in made if c.id not in self.pool.discarded]
 
@@ -845,51 +910,7 @@ class _Pipeline:
         return [(g.name, g.keywords) for g in out.groups]
 
     def fact_sections(self, facts: Facts) -> dict[str, Any]:
-        """Education, languages, certificates and awards exactly as stored."""
-        education = []
-        for e in facts.education:
-            entry: dict[str, Any] = {"institution": e.institution}
-            for key, value in (
-                ("area", e.area),
-                ("studyType", e.degree_type),
-                ("startDate", e.start_month),
-                ("endDate", e.end_month),
-                ("score", e.grade),
-                ("summary", e.summary),
-                ("highlights", e.highlights),
-                ("links", [link.model_dump() for link in e.links]),
-            ):
-                if value:
-                    entry[key] = value
-            education.append(entry)
-        languages = []
-        for lg in facts.languages:
-            name, fluency = language_display(lg.language_code, lg.level, self.lang)
-            languages.append({"language": name, "fluency": fluency})
-        certificates = []
-        for c in facts.certificates:
-            entry = {"name": c.name}
-            for key, value in (("date", c.issued_month), ("issuer", c.issuer), ("url", c.url)):
-                if value:
-                    entry[key] = value
-            certificates.append(entry)
-        awards = []
-        for a in facts.awards:
-            entry = {"title": a.title}
-            for key, value in (
-                ("date", a.awarded_month),
-                ("awarder", a.awarder),
-                ("summary", a.summary),
-            ):
-                if value:
-                    entry[key] = value
-            awards.append(entry)
-        return {
-            "education": education,
-            "languages": languages,
-            "certificates": certificates,
-            "awards": awards,
-        }
+        return fact_sections(facts, self.lang)
 
     def basics(self, facts: Facts, headline: str, summary: list[str]) -> dict[str, Any]:
         p = facts.profile
@@ -971,6 +992,7 @@ class _Pipeline:
         cv["languages"] = facts_json["languages"]
         cv["certificates"] = facts_json["certificates"]
         cv["awards"] = facts_json["awards"]
+        cv["meta"] = facts_json["meta"]
         cv = {k: v for k, v in cv.items() if v or k == "basics"}
         placed: dict[tuple[str, int | None], Candidate] = {}
         if heads:
@@ -987,39 +1009,54 @@ class _Pipeline:
 
     # --- the whole pipeline ------------------------------------------------------------
 
+    async def step[T](self, name: str, work: Awaitable[T]) -> T:
+        with self.svc._runners.stage(self.user, name):
+            return await work
+
     async def run(self) -> None:
-        facts = await self.load()
+        facts = await self.step("load", self.load())
         self.facts = facts
         if not facts.claims:
             raise InputError("No confirmed claims: ingest and review documents first.")
-        await self.translate(facts)
+        await self.step("translate", self.translate(facts))
+        self.profile_coverage = await self.step(
+            "profile_coverage",
+            self.profile_service.coverage(
+                self.user, self.jd, self.as_of, facts=facts, translated=True
+            ),
+        )
         vocab = self.vocabulary(facts)
         self.vocab = vocab
         fixed = self.fixed_elements(facts)
         self.fixed = fixed
-        await self.judge_relevance(facts)
-        await self.generate_candidates(facts)
-        await self.verify(facts, list(self.pool.cands.values()), vocab)
-        await self.judge_candidates(facts, self.pool.live(), fixed)
-        await self.generate_inventions(facts, fixed)
+        await self.step("relevance", self.judge_relevance(facts))
+        await self.step("candidates", self.generate_candidates(facts))
+        await self.step("verification", self.verify(facts, list(self.pool.cands.values()), vocab))
+        await self.step("matching", self.judge_candidates(facts, self.pool.live(), fixed))
+        await self.step("inventions", self.generate_inventions(facts, fixed))
         inventions = [c for c in self.pool.live() if c.fidelity is Fidelity.INVENTED]
-        await self.verify(facts, inventions, vocab)
-        await self.judge_candidates(
-            facts, [c for c in inventions if c.id not in self.pool.discarded], fixed
+        await self.step("verification", self.verify(facts, inventions, vocab))
+        await self.step(
+            "matching",
+            self.judge_candidates(
+                facts, [c for c in inventions if c.id not in self.pool.discarded], fixed
+            ),
         )
         fillers = [self.pool.cands[i] for i in self.pool.filler]
-        await self.judge_candidates(facts, fillers, fixed)
+        await self.step("matching", self.judge_candidates(facts, fillers, fixed))
 
-        sel = self.select(facts, fixed)
-        summary_options = await self.summary_candidates(facts, sel, vocab)
-        await self.judge_candidates(facts, summary_options, fixed)
+        with self.svc._runners.stage(self.user, "selection"):
+            sel = self.select(facts, fixed)
+        summary_options = await self.step("summary", self.summary_candidates(facts, sel, vocab))
+        await self.step("matching", self.judge_candidates(facts, summary_options, fixed))
 
         for iteration in range(1, self.s.optimizer.max_render_iterations + 1):
-            sel = self.select(facts, fixed)
-            sel = self.choose_summary(facts, fixed, sel, summary_options)
-            sel = self.widen_skills(facts, fixed, sel)
-            self.selection = sel
-            done = await self.assemble_and_check(facts, sel)
+            with self.svc._runners.stage(self.user, "selection"):
+                sel = self.select(facts, fixed)
+                sel = self.choose_summary(facts, fixed, sel, summary_options)
+                sel = self.widen_skills(facts, fixed, sel)
+                self.selection = sel
+            done = await self.step("assembly", self.assemble_and_check(facts, sel))
             if done:
                 log.info("generation done", extra={"iterations": iteration})
                 return
@@ -1071,14 +1108,22 @@ class _Pipeline:
                 sentence=key[1],
                 text=c.text,
                 candidate=c,
-                sources=[facts.claims[s] for s in c.source_claim_ids],
+                sources=[facts.original_claims[s] for s in c.source_claim_ids],
+                source_records=self.record_sources(facts, c),
                 inferable=self.pool.inferable[c.id],
                 gain=sel.gains.get(c.id, 0.0),
                 alternative_gain=sel.alternative_gain.get(c.id),
             )
             for key, c in placed.items()
         }
-        report, rows = self.report(facts, scored.result, scored.elements, statements)
+        report, rows = self.report(facts, scored.result, scored.elements, statements, scored.values)
+        report = report.model_copy(
+            update={
+                "target_cv_fingerprint": content_fingerprint(JSONResume.model_validate(cv)),
+                "requirements_fingerprint": content_fingerprint(self.jd),
+                "scoring_context": scoring_context(self.s, self.as_of),
+            }
+        )
         annotations = self.annotations(placed, scored.result, rows)
         violations = validate_statements(
             list(statements.values()),
@@ -1175,6 +1220,7 @@ class _Pipeline:
                     fidelity=c.fidelity,
                     provability=c.provability,
                     source_claim_ids=c.source_claim_ids,
+                    source_record_refs=c.source_record_refs,
                     inferred_from=c.inferred_from,
                     requirement_ids=wins.get(eid, []),
                     impact=result.impacts.get(eid, 0.0),
@@ -1189,6 +1235,7 @@ class _Pipeline:
         result: ScoreResult,
         elements: list[CVElement],
         statements: dict[tuple[str, int | None], PlacedStatement],
+        values: dict[tuple[str, str], float],
     ) -> tuple[Report, dict[str, int]]:
         infos = {}
         for (pointer, sentence), p in statements.items():
@@ -1196,7 +1243,10 @@ class _Pipeline:
             infos[eid] = StatementInfo(
                 fidelity=p.candidate.fidelity,
                 provability=p.candidate.provability,
-                source=" | ".join(facts.original_text[s] for s in p.candidate.source_claim_ids)
+                source=" | ".join(
+                    [facts.original_text[s] for s in p.candidate.source_claim_ids]
+                    + [s.text for s in p.source_records]
+                )
                 or (
                     "inferred from: "
                     + " | ".join(facts.original_text[s] for s in p.candidate.inferred_from)
@@ -1234,7 +1284,7 @@ class _Pipeline:
                 )
             )
         ranges = [(p.start_month, p.end_month or f"{self.as_of:%Y-%m}") for p in facts.positions]
-        return build_report(
+        report, rows = build_report(
             self.jd,
             result,
             elements,
@@ -1244,7 +1294,49 @@ class _Pipeline:
             ranges,
             self.as_of,
             self.s.report.timeline_gap_months,
+            values,
         )
+        assertions = {a.ref: a for a in self.profile_coverage.snapshot.assertions}
+        provenance = []
+        for element in elements:
+            placed_stmt = statements.get(_split(element.id))
+            if placed_stmt:
+                candidate = placed_stmt.candidate
+                refs = [
+                    f"claim:{cid}"
+                    for cid in [*candidate.source_claim_ids, *candidate.inferred_from]
+                ] + candidate.source_record_refs
+                provenance.append(
+                    StatementProvenance(
+                        element_id=element.id,
+                        text=element.text,
+                        source_claim_ids=candidate.source_claim_ids,
+                        source_record_refs=candidate.source_record_refs,
+                        inferred_from=candidate.inferred_from,
+                        transformation_reason=candidate.fidelity.value,
+                        sources=[
+                            assertions[ref] for ref in dict.fromkeys(refs) if ref in assertions
+                        ],
+                    )
+                )
+            elif element.kind in (
+                ElementKind.EDUCATION,
+                ElementKind.LANGUAGE,
+                ElementKind.CERTIFICATE,
+            ):
+                ref = element_ref(facts, element)
+                provenance.append(
+                    StatementProvenance(
+                        element_id=element.id,
+                        text=element.text,
+                        source_record_refs=[ref],
+                        transformation_reason="stored record",
+                        sources=[assertions[ref]] if ref in assertions else [],
+                    )
+                )
+        return explain_report(
+            report, self.jd, self.profile_coverage, result, elements, values, provenance, dropped
+        ), rows
 
     # --- step 11: write ------------------------------------------------------------------
 
@@ -1261,6 +1353,11 @@ class _Pipeline:
         put("report.json", dump(self.report_obj.model_dump(mode="json")))
         put("report.csv", report_csv(self.report_obj))
         put("candidates.json", dump(self.candidates_json()))
+        clean = build_render_model(JSONResume.model_validate(self.cv), self.s, lang=self.lang)
+        clean_result = self.svc._render.render_model(clean, run_dir / "cv.pdf")
+        if clean_result.pages > self.s.optimizer.page_budget:
+            raise ValidationFailed("The staged clean CV exceeds its page budget.")
+        out.append(clean_result.path)
         model = build_render_model(
             JSONResume.model_validate(self.cv),
             self.s,
@@ -1271,14 +1368,21 @@ class _Pipeline:
         out.append(self.svc._render.render_model(model, run_dir / "cv-annotated.pdf").path)
         versions = dict(info.prompt_versions)
         versions.update({t.name: t.version for t in TASKS})
+        versions[JUDGE_MATCH.name] = JUDGE_MATCH.version
+        versions[PAIR_TASK] = pair_cache_version()
         updated = info.model_copy(
             update={
+                "generated_at": datetime.now(UTC),
+                "language": self.lang,
                 "prompt_versions": dict(sorted(versions.items())),
                 "models": {"strong": self.s.llm.strong_model, "fast": self.s.llm.fast_model},
                 "config": self.s.model_dump(mode="json"),
             }
         )
         put("run.json", dump(updated.model_dump(mode="json")))
+        put("requirements.json", dump(self.jd.model_dump(mode="json")))
+        put("profile-snapshot.json", dump(self.profile_coverage.snapshot.model_dump(mode="json")))
+        out.append(run_dir / "usage.json")  # operation envelope is written after this stage
         return out
 
     def candidates_json(self) -> list[dict[str, Any]]:

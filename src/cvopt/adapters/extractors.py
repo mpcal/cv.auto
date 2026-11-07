@@ -54,11 +54,15 @@ class LocalTextExtractor:
                     f"{path.name} has {pages} pages; the limit is {self._s.max_pdf_pages}."
                 )
             parts = []
-            visible_chars = 0
+            scanned = False
             all_urls = []
             for page in reader.pages:
                 body = page.extract_text() or ""
-                visible_chars += len(body.strip())
+                visible = len(body.strip())
+                # A blank page needs no OCR. An image-only or short-text page does,
+                # even when another page has an excellent text layer.
+                if (visible or len(page.images)) and visible < self._s.min_text_chars:
+                    scanned = True
                 # Text extraction omits link targets. Keep them available to the
                 # structured extractor without treating them as visible page text.
                 urls = []
@@ -73,7 +77,6 @@ class LocalTextExtractor:
             text = "\f".join(parts)
         except PdfReadError as err:
             raise InputError(f"Cannot read PDF {path.name}: {err}") from err
-        scanned = visible_chars < self._s.min_text_chars
         if scanned:
             text = "\nLink targets:\n" + "\n".join(all_urls) if all_urls else ""
         return ExtractedText(text, "application/pdf", pages, scanned)

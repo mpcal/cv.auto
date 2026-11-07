@@ -40,6 +40,20 @@ class RSkillGroup(Model):
     keywords: list[RStatement]
 
 
+class RRequirement(Model):
+    heading: str
+    coverage: str
+    support: list[str]
+    target: list[str]
+    context: list[str]
+    actions: list[str]
+
+
+class REvidence(Model):
+    ref: str
+    text: str
+
+
 class RenderModel(Model):
     template: Literal["altacv-mod-1"] = "altacv-mod-1"
     mode: Literal["annotated", "clean"]
@@ -61,3 +75,8 @@ class RenderModel(Model):
     legend: str  # annotated only
     report_summary: list[str]  # annotated only: score, splits, logistics, timeline gaps
     report: list[ReportRow]  # annotated only
+
+    report_requirements: list[RRequirement] = []
+    report_assertions: list[REvidence] = []
+    report_sources: list[REvidence] = []
+    report_row_sources: dict[str, str] = {}

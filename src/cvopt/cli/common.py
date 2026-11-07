@@ -13,12 +13,14 @@ from rich.console import Console
 from rich.table import Table
 
 from cvopt.bootstrap import Container, build_container
+from cvopt.cli.progress import TerminalProgress
 from cvopt.config import Settings
 from cvopt.context import UserContext
 from cvopt.errors import CvoptError, InputError
 
 log = logging.getLogger("cvopt.cli")
 console = Console()
+stderr_console = Console(stderr=True)
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ class AppState:
 
 
 def fail(err: CvoptError) -> typer.Exit:
-    console.print(f"[red]{err}[/red]", highlight=False)
+    stderr_console.print(f"[red]{err}[/red]", highlight=False)
     return typer.Exit(err.exit_code)
 
 
@@ -45,7 +47,7 @@ def run_async[T](
 
     async def main() -> T:
         user = state.user
-        c = await build_container(state.settings)
+        c = await build_container(state.settings, observer=TerminalProgress(stderr_console))
         try:
             if writes:
                 with c.files.lock(user):  # one writer per user

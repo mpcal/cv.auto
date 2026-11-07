@@ -36,7 +36,7 @@ def with_links_and_awards() -> dict:
         {"network": "LinkedIn", "url": "linkedin.com/in/alice-example"},
         {"network": "GitHub", "url": "https://github.com/alice"},
     ]
-    out["awards"] = [AWARD]
+    out["awards"] = [{**AWARD, "excerpt": "Koenderink Prize"}]
     return out
 
 

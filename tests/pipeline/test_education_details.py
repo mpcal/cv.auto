@@ -165,7 +165,7 @@ def extraction() -> dict:
             "profiles": [],
         },
         "positions": [],
-        "education": [DETAILS],
+        "education": [{**DETAILS, "excerpt": DETAILS["institution"]}],
         "languages": [],
         "certificates": [],
         "claims": [],
@@ -385,6 +385,7 @@ async def test_details_from_different_degree_at_same_institution_are_not_merged(
     incoming["education"] = [
         {
             **DETAILS,
+            "excerpt": DETAILS["institution"],
             "degree_type": "MSc",
             "degree_level": "master",
             "area": "Computer Science",

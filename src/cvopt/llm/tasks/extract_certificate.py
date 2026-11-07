@@ -11,6 +11,7 @@ from cvopt.llm.tasks.common import (
     check_claim_text,
     check_education,
     check_month,
+    check_quote,
     tagged,
 )
 from cvopt.ports import FilePart, TextPart
@@ -39,6 +40,8 @@ def render(inp: CertificateInput) -> list[TextPart | FilePart]:
 
 
 def check(inp: CertificateInput, out: CertificateOutput) -> None:
+    record = out.education if out.record_type == "education" else out.certificate
+    check_quote(inp.text, record.excerpt, out.record_type)
     if out.record_type == "education":
         check_education(out.education, "education")
     else:
@@ -46,12 +49,13 @@ def check(inp: CertificateInput, out: CertificateOutput) -> None:
             raise ValueError("certificate.name is required")
         check_month(out.certificate.issued_month, "certificate.issued_month")
     for i, c in enumerate(out.claims):
+        check_quote(inp.text, c.excerpt, f"claims[{i}]")
         check_claim_text(c.text, c.keywords, f"claims[{i}]")
 
 
 EXTRACT_CERTIFICATE = Task(
     name="extract_certificate",
-    version="2",
+    version="3",
     tier="strong",
     input_model=CertificateInput,
     output_model=CertificateOutput,

@@ -28,3 +28,5 @@ Claims:
 - One claim per assertion the passage supports, phrased as a plain statement about the person's work ("Migrated the analytics data platform from MySQL to PostgreSQL, reducing query times by 40%"), in the letter's language, keeping every number, name and tool exactly.
 - Type `achievement`, `experience` or `skill` as for a CV. `keywords`: tools, technologies and competences in canonical spelling, concepts in English ("PostgreSQL", "churn prediction", "people leadership"); at least one per claim.
 - `excerpt`: a verbatim quote from the letter, at most 300 characters, that supports the passage's grade and claims. Copy it exactly; do not shorten words inside it.
+
+Return a nonempty `excerpt` for every extracted fact record and claim: copy a supporting span exactly from the document, preserving case, punctuation and whitespace. Never invent a quotation or paraphrase it. For reference letters supply `position_excerpt` for the position attachment, and nonempty verbatim passage excerpts for the claims. Omit unsupported assertions.

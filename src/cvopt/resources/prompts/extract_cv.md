@@ -30,3 +30,5 @@ Formats:
 - `degree_level`: secondary, vocational, bachelor, master, doctorate, or other. BSc/BA/BEng are bachelor; MSc/MA/MBA/Diplom are master; PhD/Dr. are doctorate.
 - `language_code`: lower-case ISO 639-1 ("de" for German or Deutsch). `level`: one of A1, A2, B1, B2, C1, C2, native. Map fluency words: native/mother tongue → native; fluent/proficient → C1 unless a CEFR level is given; intermediate → B1; basic → A2. An explicit CEFR level in the CV wins.
 - Absent values are "" (or [] for lists). Extract nothing that is not in the text.
+
+Return a nonempty `excerpt` for every extracted fact record and claim: copy a supporting span exactly from the document, preserving case, punctuation and whitespace. Never invent a quotation or paraphrase it. For reference letters supply `position_excerpt` for the position attachment, and nonempty verbatim passage excerpts for the claims. Omit unsupported assertions.

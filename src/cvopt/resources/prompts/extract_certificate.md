@@ -11,3 +11,5 @@ The document is in `<document>`. Decide whether it is an education record (a deg
 - Certificate: name, issuer, issue month, URL if printed.
 - Months as `YYYY-MM`; a year alone becomes `YYYY-01`.
 - `claims`: skill claims only for competences the document explicitly attests (named courses, modules or certified skills). The text names the competence; `keywords` give it in canonical spelling. Do not infer skills from the degree's title alone.
+
+Return a nonempty `excerpt` for every extracted fact record and claim: copy a supporting span exactly from the document, preserving case, punctuation and whitespace. Never invent a quotation or paraphrase it. For reference letters supply `position_excerpt` for the position attachment, and nonempty verbatim passage excerpts for the claims. Omit unsupported assertions.

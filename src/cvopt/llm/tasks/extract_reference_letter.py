@@ -2,7 +2,6 @@
 
 from cvopt.domain.base import Model
 from cvopt.domain.enums import CIStrEnum
-from cvopt.domain.text import normalize
 from cvopt.llm.task import Task
 from cvopt.llm.tasks.common import (
     ExClaim,
@@ -10,6 +9,7 @@ from cvopt.llm.tasks.common import (
     check_claim_text,
     check_month,
     check_position,
+    check_quote,
     tagged,
 )
 from cvopt.ports import FilePart, TextPart
@@ -49,6 +49,7 @@ class Passage(Model):
 
 
 class LetterOutput(Model):
+    position_excerpt: str = ""  # documentary support for the position link
     issuer: str  # employer issuing the letter
     author: str
     period_start: str
@@ -77,16 +78,15 @@ def check(inp: LetterInput, out: LetterOutput) -> None:
     refs = {p.ref for p in inp.positions}
     if out.position_ref and out.position_ref not in refs:
         raise ValueError(f"position_ref {out.position_ref!r} is not one of {sorted(refs)}")
+    check_quote(inp.text, out.position_excerpt, "position")
     if not out.position_ref:
         check_position(out.new_position, "new_position")
     check_month(out.period_start, "period_start")
     check_month(out.period_end, "period_end")
-    text = normalize(inp.text)
     for i, p in enumerate(out.passages):
         if len(p.excerpt) > MAX_EXCERPT:
             raise ValueError(f"passages[{i}].excerpt is longer than {MAX_EXCERPT} characters")
-        if normalize(p.excerpt) not in text:
-            raise ValueError(f"passages[{i}].excerpt is not a verbatim quote of the letter")
+        check_quote(inp.text, p.excerpt, f"passages[{i}]")
         if p.claims and p.grade not in EVIDENCE_GRADES:
             raise ValueError(
                 f"passages[{i}] is graded {p.grade}; only good and very_good "
@@ -98,7 +98,7 @@ def check(inp: LetterInput, out: LetterOutput) -> None:
 
 EXTRACT_REFERENCE_LETTER = Task(
     name="extract_reference_letter",
-    version="1",
+    version="2",
     tier="strong",
     input_model=LetterInput,
     output_model=LetterOutput,

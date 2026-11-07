@@ -16,6 +16,38 @@ async def test_golden_generation_meets_p1_criteria(golden: Container, alice: Use
     runs = await generate_golden(golden, alice)
     for run_dir in runs.values():
         await check_generation(golden, alice, run_dir)
+        usage = json.loads((run_dir / "usage.json").read_text())
+        assert {s["stage"] for s in usage["operation"]["stages"]} >= {
+            "load",
+            "translate",
+            "profile_coverage",
+            "relevance",
+            "candidates",
+            "verification",
+            "matching",
+            "selection",
+            "assembly",
+            "write",
+        }
+        assert usage["jd_intake"]["operation"] == "jd_intake"
+        report = json.loads((run_dir / "report.json").read_text())
+        snapshot = json.loads((run_dir / "profile-snapshot.json").read_text())
+        assert report["profile_supported_score"] is not None
+        assert report["profile_snapshot_fingerprint"] == snapshot["fingerprint"]
+        assert snapshot["schema_version"] == 2
+        assert report["requirements"] and report["provenance"]
+        assert all(r["profile_coverage"] is not None for r in report["requirements"])
+        from cvopt.services.scoring import standalone_report
+
+        scored = await golden.scoring.score(
+            alice, run_dir / "cv.json", run_dir / "requirements.json"
+        )
+        standalone = standalone_report(scored, None, 6)
+        assert standalone.profile_supported_score == report["profile_supported_score"]
+        annotations = json.loads((run_dir / "annotations.json").read_text())
+        assert {a["pointer"] for a in annotations} <= {
+            p["element_id"].split("#")[0] for p in report["provenance"]
+        }
 
     # Skills beyond the optimizer's choice show the breadth of the profile.
     for run_dir in runs.values():

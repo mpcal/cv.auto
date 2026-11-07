@@ -14,6 +14,7 @@ from cvopt.llm.tasks.common import (
     check_language,
     check_month,
     check_position,
+    check_quote,
     tagged,
 )
 from cvopt.ports import FilePart, TextPart
@@ -40,6 +41,7 @@ class ExProfile(Model):
 
 
 class ExCVClaim(Model):
+    excerpt: str = ""
     type: ClaimType
     text: str
     keywords: list[str]
@@ -61,6 +63,9 @@ def render(inp: CVInput) -> list[TextPart | FilePart]:
 
 
 def check(inp: CVInput, out: CVOutput) -> None:
+    for collection in ("positions", "education", "languages", "certificates", "awards", "claims"):
+        for i, item in enumerate(getattr(out, collection)):
+            check_quote(inp.text, item.excerpt, f"{collection}[{i}]")
     for i, p in enumerate(out.positions):
         check_position(p, f"positions[{i}]")
     for i, e in enumerate(out.education):
@@ -79,7 +84,7 @@ def check(inp: CVInput, out: CVOutput) -> None:
 
 EXTRACT_CV = Task(
     name="extract_cv",
-    version="3",
+    version="4",
     tier="strong",
     input_model=CVInput,
     output_model=CVOutput,
